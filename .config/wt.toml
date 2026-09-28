@@ -1,25 +1,19 @@
-# Worktrunk project settings for this repository. Run `wt config approvals add`
-# once per clone, and again after a hook or an alias changes. Without approval,
-# worktrunk runs no project hook and no project alias.
-#
-# The worktree location comes from the user's global worktree-path, so no
-# worktree-path line here. Older worktrees named artifact-review.<branch> were
-# created before that global line existed, when worktrunk's own sibling default
-# applied. Git keeps them where they are.
-#
-# Every dotted key must stay ABOVE the post-start array header below. A dotted
-# key written after it becomes a member of the last array element instead.
+# Run `wt config approvals add` once per clone and after each hook or alias
+# change. Worktrunk runs no unapproved project command.
 
-# The two cheapest gates CI already runs, 0.1s and 5s. They catch a broken
-# bundled runtime and a failing self test before the merge, not after it.
-pre-merge.doctor = "skills/artifact-review/scripts/arev doctor"
-pre-merge.test = "npm test"
+# The user's global worktree-path sets the worktree location, so this file sets
+# none.
 
-# `wt new [PROJ-123 | #123] [slug words]` names the branch
-# `<type>-<TICKET>-<slug>`, with the type from the tracker, or a plain kebab slug
-# without a ticket. It bases the worktree on origin's freshly fetched default
-# branch.
-aliases.new = '''
+# These two cheapest CI gates take 0.1s and 5s. They catch a broken runtime or
+# failing self test before the merge.
+[pre-merge]
+doctor = "skills/artifact-review/scripts/arev doctor"
+test = "npm test"
+
+# `wt new [PROJ-123 | #123] [slug words]` creates a `<type>-<TICKET>-<slug>`
+# branch, or a kebab slug branch, from origin's fetched default branch.
+[aliases]
+new = '''
 set -e
 set -- {{ args }}
 ticket=""
@@ -28,8 +22,8 @@ for a in "$@"; do
   case "$a" in
     --*) echo "note: $a ignored, set wt switch defaults in config instead" >&2 ;;
     *)
-      # A Jira key such as PROJ-123, or a GitHub issue such as #123, only as the
-      # whole first word. A slug such as issue-123-not-loading stays a slug.
+      # Only a whole first word such as PROJ-123 or #123 is a ticket. So
+      # issue-123-not-loading stays a slug.
       if [ -z "$ticket" ] && [ -z "$words" ] \
         && printf '%s\n' "$a" | grep -Eq '^([A-Za-z][A-Za-z0-9]*-[0-9]+|#[0-9]+)$'; then
         ticket="$(printf '%s' "$a" | tr '[:lower:]' '[:upper:]')"
@@ -49,8 +43,8 @@ if [ -n "$ticket" ]; then
         exit 1
       fi
       summary="$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["title"])')"
-      # Match whole label names, so a label such as not-a-bug gives no type. Bug
-      # comes first, so an issue labeled bug and task stays a bug.
+      # Whole label names must match, so not-a-bug gives no type. Bug comes
+      # first, so bug plus task stays a bug.
       kind="$(printf '%s' "$json" | python3 -c '
 import json, sys
 names = {label["name"].lower() for label in json.load(sys.stdin)["labels"]}
@@ -87,7 +81,7 @@ for kind, labels in (("bug", {"bug", "defect"}),
 fi
 if [ -z "$words" ] && [ -n "$summary" ]; then
   words="$(printf 'Compress this ticket summary into AT MOST 4 lowercase words separated by spaces, the fewest distinctive words that identify the change. Drop project names, filler and punctuation. Example: "Review board - Diagram editor: Canvas height collapses on small screens" becomes "diagram canvas height". Output only the words.\n\n%s\n' "$summary" \
-    | CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt='' 2>/dev/null || true)"
+    | CLAUDECODE='' MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt='' 2>/dev/null || true)"
   [ -n "$words" ] || words="$summary"
   words="$(printf '%s' "$words" | awk '{for(i=1;i<=4&&i<=NF;i++)printf "%s ",$i}')"
 fi
@@ -111,13 +105,13 @@ git fetch --quiet origin HEAD || abort_new "could not fetch origin's current def
 base="$(git rev-parse --verify 'FETCH_HEAD^{commit}' 2>/dev/null)" \
   || abort_new "could not resolve the fetched default-branch commit"
 echo "base: origin/HEAD at $base"
-# --yes because an agent session has no terminal, and the approval prompt cannot
-# be answered there.
+# An agent session has no terminal to answer the approval prompt, so the call
+# needs --yes.
 exec wt switch --create "$name" --base "$base" --yes
 '''
 
-# The worktree bootstrap. node_modules and build are both gitignored, so
-# `git worktree add` copies neither and no npm script runs until this finishes.
+# Git ignores node_modules and build, so `git worktree add` copies neither. No
+# npm script works until these steps finish.
 [[post-start]]
 install = "npm ci"
 
