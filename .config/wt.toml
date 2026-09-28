@@ -1,6 +1,6 @@
 # Worktrunk project settings for this repository. Run `wt config approvals add`
-# once per clone, and again after a hook changes. Without approval, worktrunk
-# runs no project hook.
+# once per clone, and again after a hook or an alias changes. Without approval,
+# worktrunk runs no project hook and no project alias.
 #
 # The worktree location comes from the user's global worktree-path, so no
 # worktree-path line here. Older worktrees named artifact-review.<branch> were
@@ -14,6 +14,98 @@
 # bundled runtime and a failing self test before the merge, not after it.
 pre-merge.doctor = "skills/artifact-review/scripts/arev doctor"
 pre-merge.test = "npm test"
+
+# `wt new [PROJ-123 | #123] [slug words]` names the branch
+# `<type>-<TICKET>-<slug>`, with the type from the tracker, or a plain kebab slug
+# without a ticket. It bases the worktree on origin's freshly fetched default
+# branch.
+aliases.new = '''
+set -e
+set -- {{ args }}
+ticket=""
+words=""
+for a in "$@"; do
+  case "$a" in
+    --*) echo "note: $a ignored, set wt switch defaults in config instead" >&2 ;;
+    # A Jira key such as PROJ-123, or a GitHub issue such as #123. Only as the
+    # first word. Later it is an ordinary slug word.
+    [A-Za-z]*-[0-9]*|'#'[0-9]*)
+      if [ -z "$ticket" ] && [ -z "$words" ]; then
+        ticket="$(printf '%s' "$a" | tr '[:lower:]' '[:upper:]')"
+      else words="$words $a"; fi ;;
+    *) words="$words $a" ;;
+  esac
+done
+# Read the ticket once. The summary feeds the slug when no words were given, and
+# the issue type feeds the branch type.
+kind=""
+summary=""
+if [ -n "$ticket" ]; then
+  case "$ticket" in
+    '#'*)
+      json="$(gh issue view "${ticket#\#}" --json title,labels 2>/dev/null || true)"
+      if [ -z "$json" ]; then
+        echo "could not read issue $ticket from GitHub. Check gh auth status" >&2
+        exit 1
+      fi
+      summary="$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["title"])')"
+      kind="$(printf '%s' "$json" | python3 -c 'import json,sys; print(" ".join(l["name"] for l in json.load(sys.stdin)["labels"]))')"
+      ticket="${ticket#\#}"
+      ;;
+    *)
+      json="$(acli jira workitem view "$ticket" --fields summary,issuetype --json 2>/dev/null || true)"
+      summary="$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["fields"]["summary"])' 2>/dev/null || true)"
+      kind="$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["fields"]["issuetype"]["name"])' 2>/dev/null || true)"
+      if [ -z "$summary" ]; then
+        echo "could not read $ticket from Jira, give the slug words yourself" >&2
+        exit 1
+      fi
+      ;;
+  esac
+  echo "summary: $summary"
+  # Bug is tested first. A GitHub issue can carry a type label next to bug, and a
+  # bug stays a bug.
+  case "$(printf '%s' "$kind" | tr '[:upper:]' '[:lower:]')" in
+    '') echo "$ticket carries no issue type. Set one in the tracker, or label a GitHub issue bug, enhancement or task" >&2
+        exit 1 ;;
+    *bug*|*defect*) type=bug ;;
+    *story*|*feature*|*enhancement*|*improvement*|*epic*) type=feature ;;
+    *task*|*chore*|*spike*) type=task ;;
+    *) echo "$ticket has issue type '$kind', which is none of feature, bug or task. Fix the type in the tracker" >&2
+       exit 1 ;;
+  esac
+  echo "type: $type"
+fi
+if [ -z "$words" ] && [ -n "$summary" ]; then
+  words="$(printf 'Compress this ticket summary into AT MOST 4 lowercase words separated by spaces, the fewest distinctive words that identify the change. Drop project names, filler and punctuation. Example: "Review board - Diagram editor: Canvas height collapses on small screens" becomes "diagram canvas height". Output only the words.\n\n%s\n' "$summary" \
+    | CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt='' 2>/dev/null || true)"
+  [ -n "$words" ] || words="$summary"
+  words="$(printf '%s' "$words" | awk '{for(i=1;i<=4&&i<=NF;i++)printf "%s ",$i}')"
+fi
+slug="$(printf '%s' "$words" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-*//' | cut -c1-48 | sed 's/-*$//')"
+if [ -z "$slug" ] && [ -z "$ticket" ]; then
+  echo "usage: wt new [PROJ-123 | #123] [slug words]" >&2
+  exit 2
+fi
+if [ -n "$ticket" ]; then
+  name="$type-$ticket${slug:+-$slug}"
+else
+  name="$slug"
+fi
+echo "branch: $name"
+abort_new() {
+  printf '%s; no worktree created\n' "$1" >&2
+  exit 1
+}
+# Fetch remote HEAD because cached default-branch values can be stale.
+git fetch --quiet origin HEAD || abort_new "could not fetch origin's current default branch"
+base="$(git rev-parse --verify 'FETCH_HEAD^{commit}' 2>/dev/null)" \
+  || abort_new "could not resolve the fetched default-branch commit"
+echo "base: origin/HEAD at $base"
+# --yes because an agent session has no terminal, and the approval prompt cannot
+# be answered there.
+exec wt switch --create "$name" --base "$base" --yes
+'''
 
 # The worktree bootstrap. node_modules and build are both gitignored, so
 # `git worktree add` copies neither and no npm script runs until this finishes.
