@@ -27,13 +27,13 @@ words=""
 for a in "$@"; do
   case "$a" in
     --*) echo "note: $a ignored, set wt switch defaults in config instead" >&2 ;;
-    # A Jira key such as PROJ-123, or a GitHub issue such as #123. Only as the
-    # first word. Later it is an ordinary slug word.
-    [A-Za-z]*-[0-9]*|'#'[0-9]*)
-      if [ -z "$ticket" ] && [ -z "$words" ]; then
+    *)
+      # A Jira key such as PROJ-123, or a GitHub issue such as #123, only as the
+      # whole first word. A slug such as issue-123-not-loading stays a slug.
+      if [ -z "$ticket" ] && [ -z "$words" ] \
+        && printf '%s\n' "$a" | grep -Eq '^([A-Za-z][A-Za-z0-9]*-[0-9]+|#[0-9]+)$'; then
         ticket="$(printf '%s' "$a" | tr '[:lower:]' '[:upper:]')"
       else words="$words $a"; fi ;;
-    *) words="$words $a" ;;
   esac
 done
 # Read the ticket once. The summary feeds the slug when no words were given, and
@@ -43,13 +43,24 @@ summary=""
 if [ -n "$ticket" ]; then
   case "$ticket" in
     '#'*)
-      json="$(gh issue view "${ticket#\#}" --json title,labels 2>/dev/null || true)"
+      json="$(gh issue view "${ticket#\#}" -R arDaraz/artifact-review --json title,labels 2>/dev/null || true)"
       if [ -z "$json" ]; then
         echo "could not read issue $ticket from GitHub. Check gh auth status" >&2
         exit 1
       fi
       summary="$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["title"])')"
-      kind="$(printf '%s' "$json" | python3 -c 'import json,sys; print(" ".join(l["name"] for l in json.load(sys.stdin)["labels"]))')"
+      # Match whole label names, so a label such as not-a-bug gives no type. Bug
+      # comes first, so an issue labeled bug and task stays a bug.
+      kind="$(printf '%s' "$json" | python3 -c '
+import json, sys
+names = {label["name"].lower() for label in json.load(sys.stdin)["labels"]}
+for kind, labels in (("bug", {"bug", "defect"}),
+                     ("feature", {"enhancement", "feature", "story", "improvement", "epic"}),
+                     ("task", {"task", "chore", "spike"})):
+    if names & labels:
+        print(kind)
+        break
+')"
       ticket="${ticket#\#}"
       ;;
     *)
@@ -63,8 +74,6 @@ if [ -n "$ticket" ]; then
       ;;
   esac
   echo "summary: $summary"
-  # Bug is tested first. A GitHub issue can carry a type label next to bug, and a
-  # bug stays a bug.
   case "$(printf '%s' "$kind" | tr '[:upper:]' '[:lower:]')" in
     '') echo "$ticket carries no issue type. Set one in the tracker, or label a GitHub issue bug, enhancement or task" >&2
         exit 1 ;;
