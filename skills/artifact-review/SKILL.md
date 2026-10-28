@@ -34,9 +34,11 @@ the type is unclear, inspect the index and fetch only matching ids:
 Fill only the scaffold's `<!-- arev:content -->` region. Every diagram is
 Mermaid in `<pre class="mermaid" id="stable-id">` - never hand-built div
 boxes, and never a CDN script; the review server renders Mermaid offline and
-attaches the editable whiteboard only to those blocks. Diagram colors and
-fonts derive from the page palette automatically and follow theme flips, so
-never set a Mermaid theme or `%%init%%` colors.
+attaches the editable whiteboard only to those blocks. A page that must also
+draw its diagrams when opened from disk uses the guarded fallback in
+[runtime.md § Installation and authoring](references/runtime.md#installation-and-authoring).
+Diagram colors and fonts derive from the page palette automatically and follow
+theme flips, so never set a Mermaid theme or `%%init%%` colors.
 
 Then audit the file before anyone opens it. `check` reads the artifact and the
 documents it explains, and fails on a diagram that cannot render and on a

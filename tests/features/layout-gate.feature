@@ -16,6 +16,7 @@ Feature: Layout gate
       | a scaffolded artifact                       |
       | a scaffolded artifact whose cards hold code |
       | a scrolling-table artifact                  |
+      | a mermaid-long-line artifact                |
 
   Scenario: Saving a broken layout blocks the review and tells the agent
     Given a clean artifact
@@ -56,3 +57,10 @@ Feature: Layout gate
     When the agent replaces the artifact with "clean.html"
     Then the layout gate reports "clear"
     And the review is not blocked
+
+  Scenario: A control pushed outside its scroll box is still unreachable
+    Given a stranded-control artifact
+    And the reviewer opens a review session the layout gate blocks
+    Then the agent receives a layout event
+    And the layout event names the kinds:
+      | unreachable-control |
