@@ -90,7 +90,8 @@ Then('the audit finds no overflow on the desktop pass', async ({ arev }) => {
   )).toEqual([]);
 });
 
-Then('the curtain shows the phone evidence', async ({ page }) => {
+Then('the curtain shows the phone evidence', async ({ page, rail }) => {
+  await expect(rail.curtain).toBeVisible();
   await expect(page.locator('#curtainTitle')).toHaveText('The layout needs attention');
   await expect(page.locator('#curtainList')).toContainText('Mobile 360px');
 });
@@ -106,4 +107,8 @@ Then('the agent hears about the phone overflow', async ({ arev }) => {
   expect((event.layout_warnings || []).some(
     warning => warning.kind === 'h-overflow' && warning.viewportClass === 'mobile',
   )).toBe(true);
+});
+
+When('the layout check time limit passes', async ({ page }) => {
+  await page.waitForTimeout(4_500);
 });
