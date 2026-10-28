@@ -5,17 +5,17 @@
 <title>stranded control fixture</title>
 <style>
   body { font-family: sans-serif; margin: 0; padding: 16px; }
-  /* A scroll box cannot scroll to a negative offset, so this button is out
-     of reach even though it sits inside one. */
+  /* The inner scroll box sits where the outer one cannot scroll, so the
+     button inside it is out of reach although the inner box holds it. */
   .shell { overflow-y: auto; height: 300px; position: relative; }
-  .shell button { position: absolute; left: -3000px; top: 0; }
+  .panel { overflow: auto; position: absolute; left: -3000px; top: 0; width: 200px; height: 100px; }
 </style>
 </head>
 <body>
-  <h1>Control pushed out of its scroll box</h1>
+  <h1>Control stranded in an unreachable scroll box</h1>
   <div class="shell">
     <p>The approve button below is placed where nobody can scroll to it.</p>
-    <button data-arev-action="approve">Approve plan</button>
+    <div class="panel"><button data-arev-action="approve">Approve plan</button></div>
   </div>
 </body>
 </html>

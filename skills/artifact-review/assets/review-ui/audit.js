@@ -48,22 +48,25 @@ window.__arevAudit = function runAudit(doc, win) {
     return tag === 'BUTTON' || tag === 'A' || tag === 'INPUT' || tag === 'SELECT' || el.hasAttribute('data-arev-action');
   }
 
-  // A control scrolls only inside its nearest scroll box on each axis, so
-  // that box sets the reachable area, not the page.
-  function scrollArea(el, axis) {
-    var x = axis === 'x';
+  function outside(pos, extent, start, size) {
+    return pos + extent < start || pos > start + size;
+  }
+
+  // The control must sit inside its nearest scroll box, each box inside the
+  // next, and the outermost box inside the page.
+  function outsideScrollAreas(el) {
+    var rect = el.getBoundingClientRect();
     for (var node = el.parentElement; node && node !== doc.body; node = node.parentElement) {
-      var overflow = win.getComputedStyle(node)[x ? 'overflowX' : 'overflowY'];
-      if (overflow === 'auto' || overflow === 'scroll') {
-        var box = node.getBoundingClientRect();
-        return x
-          ? { start: box.left + win.scrollX - node.scrollLeft, size: node.scrollWidth }
-          : { start: box.top + win.scrollY - node.scrollTop, size: node.scrollHeight };
-      }
+      var cs = win.getComputedStyle(node);
+      var scrollsX = /auto|scroll/.test(cs.overflowX), scrollsY = /auto|scroll/.test(cs.overflowY);
+      if (!scrollsX && !scrollsY) continue;
+      var box = node.getBoundingClientRect();
+      if (scrollsX && outside(rect.left, rect.width, box.left - node.scrollLeft, node.scrollWidth)) return true;
+      if (scrollsY && outside(rect.top, rect.height, box.top - node.scrollTop, node.scrollHeight)) return true;
+      rect = box;
     }
-    return x
-      ? { start: 0, size: doc.documentElement.scrollWidth }
-      : { start: 0, size: doc.documentElement.scrollHeight };
+    return outside(rect.left + win.scrollX, rect.width, 0, doc.documentElement.scrollWidth) ||
+      outside(rect.top + win.scrollY, rect.height, 0, doc.documentElement.scrollHeight);
   }
 
   function describeControl(el) {
@@ -137,13 +140,8 @@ window.__arevAudit = function runAudit(doc, win) {
         reason = 'it renders at zero size';
       } else if (cs.pointerEvents === 'none') {
         reason = 'pointer-events is none on the element itself';
-      } else {
-        var pageLeft = r.left + win.scrollX, pageTop = r.top + win.scrollY;
-        var areaX = scrollArea(el, 'x'), areaY = scrollArea(el, 'y');
-        if (pageLeft + r.width < areaX.start || pageLeft > areaX.start + areaX.size ||
-            pageTop + r.height < areaY.start || pageTop > areaY.start + areaY.size) {
-          reason = 'it sits fully outside its scrollable area';
-        }
+      } else if (outsideScrollAreas(el)) {
+        reason = 'it sits fully outside its scrollable area';
       }
       if (reason) {
         push({
