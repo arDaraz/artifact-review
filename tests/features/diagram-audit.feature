@@ -6,7 +6,7 @@ Feature: Unrendered diagrams
 
   Background:
     Given a mermaid-broken artifact
-    And the reviewer has the review session open
+    And the reviewer opens the review session
 
   Scenario: A diagram that never rendered reaches the agent on its own
     Then the "works" diagram rendered offline
@@ -16,3 +16,4 @@ Feature: Unrendered diagrams
     And the agent receives a layout event
     And the layout event names the kinds:
       | mermaid-render-failed |
+    And the review is blocked with at least 1 proven failures

@@ -15,6 +15,7 @@ Feature: Layout gate
       | a clean artifact                            |
       | a scaffolded artifact                       |
       | a scaffolded artifact whose cards hold code |
+      | a scrolling-table artifact                  |
 
   Scenario: Saving a broken layout blocks the review and tells the agent
     Given a clean artifact
@@ -42,3 +43,16 @@ Feature: Layout gate
     And the curtain shows the phone evidence
     And the artifact frame width is restored
     And the agent hears about the phone overflow
+
+  Scenario: A blocked review stays blocked until the reviewer acts
+    Given a viewport-overflow artifact
+    And the reviewer opens a review session the layout gate blocks
+    When the layout check time limit passes
+    Then the curtain shows the phone evidence
+
+  Scenario: Fixing a phone overflow clears the gate on the next save
+    Given a viewport-overflow artifact
+    And the reviewer opens a review session the layout gate blocks
+    When the agent replaces the artifact with "clean.html"
+    Then the layout gate reports "clear"
+    And the review is not blocked

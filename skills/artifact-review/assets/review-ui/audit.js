@@ -56,6 +56,29 @@ window.__arevAudit = function runAudit(doc, win) {
     return label;
   }
 
+  function outsideDocument(box) {
+    var pageLeft = box.left + win.scrollX, pageTop = box.top + win.scrollY;
+    var docW = doc.documentElement.scrollWidth, docH = doc.documentElement.scrollHeight;
+    return pageLeft + box.width < 0 || pageLeft > docW || pageTop + box.height < 0 || pageTop > docH;
+  }
+
+  // Scroll box content does not widen the document, so a control is measured
+  // against each scroll box around it.
+  function outsideScrollableArea(el, rect) {
+    if (!outsideDocument(rect)) return false;
+    var box = rect;
+    for (var node = el.parentElement; node && node !== doc.body; node = node.parentElement) {
+      var ncs = win.getComputedStyle(node);
+      if (!/auto|scroll/.test(ncs.overflowX + ' ' + ncs.overflowY)) continue;
+      var nr = node.getBoundingClientRect();
+      var left = box.left - nr.left - node.clientLeft + node.scrollLeft;
+      var top = box.top - nr.top - node.clientTop + node.scrollTop;
+      if (left + box.width < 0 || left > node.scrollWidth || top + box.height < 0 || top > node.scrollHeight) return true;
+      box = nr;
+    }
+    return outsideDocument(box);
+  }
+
   function isOpaqueBg(cs) {
     var m = (cs.backgroundColor || '').match(/rgba?\(([^)]+)\)/);
     if (m) {
@@ -111,6 +134,8 @@ window.__arevAudit = function runAudit(doc, win) {
     var el = all[i];
     var tag = el.tagName;
     if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') continue;
+    // The review tool's own controls are not part of the artifact's layout.
+    if (el.closest('[data-arev-internal]')) continue;
     var cs = win.getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden') continue;
     var r = el.getBoundingClientRect();
@@ -121,12 +146,8 @@ window.__arevAudit = function runAudit(doc, win) {
         reason = 'it renders at zero size';
       } else if (cs.pointerEvents === 'none') {
         reason = 'pointer-events is none on the element itself';
-      } else {
-        var pageLeft = r.left + win.scrollX, pageTop = r.top + win.scrollY;
-        var docW = doc.documentElement.scrollWidth, docH = doc.documentElement.scrollHeight;
-        if (pageLeft + r.width < 0 || pageLeft > docW || pageTop + r.height < 0 || pageTop > docH) {
-          reason = 'it sits fully outside the document\'s scrollable area';
-        }
+      } else if (outsideScrollableArea(el, r)) {
+        reason = 'it sits fully outside the area that its page or scroll box can scroll to';
       }
       if (reason) {
         push({
@@ -181,6 +202,7 @@ window.__arevAudit = function runAudit(doc, win) {
       var c = textCandidates[Math.floor(s * step)];
       var hit = doc.elementFromPoint(c.cx, c.cy);
       if (!hit || hit === c.el || c.el.contains(hit) || hit.contains(c.el)) continue;
+      if (hit.closest('[data-arev-internal]')) continue;
       var hcs = win.getComputedStyle(hit);
       if (isOpaqueBg(hcs)) occluded.push(hit);
     }
