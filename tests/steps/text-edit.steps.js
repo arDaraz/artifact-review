@@ -114,8 +114,8 @@ Then('the line is marked for deletion', async ({ editor }) => {
   await expect(editor.cutLine).toBeVisible();
 });
 
-// Clicking the trigger again cannot close it: the popover light-dismisses on
-// that same click, so the trigger's own handler finds it shut and reopens it.
+// A second trigger click cannot close the popover. That click dismisses it,
+// and then the trigger handler opens it again.
 When('the reviewer closes the composer menu', async ({ page }) => {
   await page.keyboard.press('Escape');
   await expect(page.locator('#chatMenu:popover-open')).toHaveCount(0);
@@ -167,11 +167,10 @@ Then('the delivered feedback is not marked as applied', async ({ arev }) => {
   expect(arev.lastEvent.applied).toBeUndefined();
 });
 
-When('the agent rewrites the artifact', async ({ artifact, arev }) => {
-  const before = (await arev.api('GET', '/state')).version;
+When('the agent rewrites the artifact', async ({ artifact, editor }) => {
   await artifact.append('\n<p>The agent added this line.</p>\n');
-  await expect.poll(async () => (await arev.api('GET', '/state')).version)
-    .not.toBe(before);
+  // A hover sent before the frame reloads lands on the old document.
+  await expect(editor.frame.getByText('The agent added this line.')).toBeVisible();
 });
 
 export { FIRST, SECOND };

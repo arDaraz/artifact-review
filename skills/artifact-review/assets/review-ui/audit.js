@@ -48,33 +48,35 @@ window.__arevAudit = function runAudit(doc, win) {
     return tag === 'BUTTON' || tag === 'A' || tag === 'INPUT' || tag === 'SELECT' || el.hasAttribute('data-arev-action');
   }
 
-  function outside(pos, extent, start, size) {
-    return pos + extent < start || pos > start + size;
-  }
-
-  // The control must sit inside its nearest scroll box, each box inside the
-  // next, and the outermost box inside the page.
-  function outsideScrollAreas(el) {
-    var rect = el.getBoundingClientRect();
-    for (var node = el.parentElement; node && node !== doc.body; node = node.parentElement) {
-      var cs = win.getComputedStyle(node);
-      var scrollsX = /auto|scroll/.test(cs.overflowX), scrollsY = /auto|scroll/.test(cs.overflowY);
-      if (!scrollsX && !scrollsY) continue;
-      var box = node.getBoundingClientRect();
-      if (scrollsX && outside(rect.left, rect.width, box.left - node.scrollLeft, node.scrollWidth)) return true;
-      if (scrollsY && outside(rect.top, rect.height, box.top - node.scrollTop, node.scrollHeight)) return true;
-      rect = box;
-    }
-    return outside(rect.left + win.scrollX, rect.width, 0, doc.documentElement.scrollWidth) ||
-      outside(rect.top + win.scrollY, rect.height, 0, doc.documentElement.scrollHeight);
-  }
-
   function describeControl(el) {
     var label = el.tagName.toLowerCase();
     if (el.hasAttribute('data-arev-action')) label += '[data-arev-action="' + el.getAttribute('data-arev-action') + '"]';
     var txt = (el.textContent || '').trim().slice(0, 30);
     if (txt) label += ' "' + txt + '"';
     return label;
+  }
+
+  function outsideDocument(box) {
+    var pageLeft = box.left + win.scrollX, pageTop = box.top + win.scrollY;
+    var docW = doc.documentElement.scrollWidth, docH = doc.documentElement.scrollHeight;
+    return pageLeft + box.width < 0 || pageLeft > docW || pageTop + box.height < 0 || pageTop > docH;
+  }
+
+  // Scroll box content does not widen the document, so a control is measured
+  // against each scroll box around it.
+  function outsideScrollableArea(el, rect) {
+    if (!outsideDocument(rect)) return false;
+    var box = rect;
+    for (var node = el.parentElement; node && node !== doc.body; node = node.parentElement) {
+      var ncs = win.getComputedStyle(node);
+      if (!/auto|scroll/.test(ncs.overflowX + ' ' + ncs.overflowY)) continue;
+      var nr = node.getBoundingClientRect();
+      var left = box.left - nr.left - node.clientLeft + node.scrollLeft;
+      var top = box.top - nr.top - node.clientTop + node.scrollTop;
+      if (left + box.width < 0 || left > node.scrollWidth || top + box.height < 0 || top > node.scrollHeight) return true;
+      box = nr;
+    }
+    return outsideDocument(box);
   }
 
   function isOpaqueBg(cs) {
@@ -89,6 +91,7 @@ window.__arevAudit = function runAudit(doc, win) {
 
   if (!doc.body) return findings;
 
+  // 1. escaped markup rendered as visible text
   var MARKUP_RE = /<\/?[a-zA-Z][a-zA-Z0-9]*(?:\s[^<>]*)?>|&lt;\/?[a-zA-Z]|&amp;lt;/;
   var walker = doc.createTreeWalker(doc.body, 4 /* SHOW_TEXT */, null);
   var tnode, markupHits = 0;
@@ -108,6 +111,7 @@ window.__arevAudit = function runAudit(doc, win) {
     markupHits++;
   }
 
+  // 2. page-level horizontal overflow
   var dw = doc.documentElement.scrollWidth;
   if (dw - vw > 24) {
     push({
@@ -120,6 +124,8 @@ window.__arevAudit = function runAudit(doc, win) {
     });
   }
 
+  // 3 & 4. per-element clipped-text and unreachable-control, plus candidate
+  // collection for the occlusion sample
   var all = doc.querySelectorAll('*');
   var n = Math.min(all.length, MAX_ELS);
   var textCandidates = [];
@@ -128,7 +134,7 @@ window.__arevAudit = function runAudit(doc, win) {
     var el = all[i];
     var tag = el.tagName;
     if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') continue;
-    // The review tool's own controls are not part of the artifact layout.
+    // The review tool's own controls are not part of the artifact's layout.
     if (el.closest('[data-arev-internal]')) continue;
     var cs = win.getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden') continue;
@@ -140,8 +146,8 @@ window.__arevAudit = function runAudit(doc, win) {
         reason = 'it renders at zero size';
       } else if (cs.pointerEvents === 'none') {
         reason = 'pointer-events is none on the element itself';
-      } else if (outsideScrollAreas(el)) {
-        reason = 'it sits fully outside its scrollable area';
+      } else if (outsideScrollableArea(el, r)) {
+        reason = 'it sits fully outside the area that its page or scroll box can scroll to';
       }
       if (reason) {
         push({
@@ -187,6 +193,7 @@ window.__arevAudit = function runAudit(doc, win) {
     }
   }
 
+  // 5. occlusion - sample up to 12 evenly spaced visible text blocks
   if (textCandidates.length) {
     var sampleCount = Math.min(12, textCandidates.length);
     var step = textCandidates.length / sampleCount;
@@ -195,6 +202,7 @@ window.__arevAudit = function runAudit(doc, win) {
       var c = textCandidates[Math.floor(s * step)];
       var hit = doc.elementFromPoint(c.cx, c.cy);
       if (!hit || hit === c.el || c.el.contains(hit) || hit.contains(c.el)) continue;
+      if (hit.closest('[data-arev-internal]')) continue;
       var hcs = win.getComputedStyle(hit);
       if (isOpaqueBg(hcs)) occluded.push(hit);
     }

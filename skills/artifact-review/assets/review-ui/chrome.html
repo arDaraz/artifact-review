@@ -343,15 +343,15 @@
     flex:1;
     display:flex;
     flex-direction:column;
-    /* On a rail too short for the headings and the composer, the panel scrolls
-       so the composer stays reachable. */
+    /* On a rail too short for the headings and the composer, the panel
+       scrolls, so the composer stays reachable. */
     overflow:hidden auto;
     visibility:visible;
     opacity:1;
     transition:opacity 100ms ease-out;
   }
-  /* A rail section keeps its heading and one list row. The section clips its
-     content instead of covering the next section. */
+  /* A section keeps its heading and one list row, and clips its content so it
+     never paints over the next section. */
   .rail-panel > section {
     min-height:var(--rail-section-min);
     display:flex;
@@ -360,8 +360,8 @@
   }
   /* display:flex above outranks the browser's own rule for a hidden element. */
   .rail-panel > section[hidden] { display:none }
-  /* On a crowded rail, a 0 basis gives this section only its floor and hides
-     every entry the agent sent. */
+  /* A 0 basis, as in flex:1, gives this section only its floor on a crowded
+     rail and hides the agent's entries. */
   .activity-section { flex:1 1 auto }
   .rail-scrim { display:none }
   html[data-review-rail="collapsed"] .review-rail {
@@ -414,11 +414,11 @@
     font-weight:650;
     text-align:center;
   }
-  /* A viewport cap is a fixed length, so the section ends where the list ends.
-     A percentage cap leaves empty space. */
+  /* A percentage cap kept the space of the uncapped list. A viewport cap is a
+     real length, so the section ends with the list. */
   .drafts { max-height:34vh; overflow:auto }
-  /* The cap exists only to stop a long queue from pushing the section open. The
-     short empty-state sentence always shows in full. */
+  /* The cap is for a long queue. The short empty-state sentence always shows
+     in full. */
   .drafts:has(.empty) { max-height:none }
   .draft-row {
     display:grid;
@@ -902,7 +902,7 @@ let annotating = false;
 let editingText = false;
 let popItem = null;
 let popSending = false;
-let auditRun = 0;
+let curtainTimer = null;
 let mermaidBlocks = [];
 let inlineGeneration = 0;
 const inlineDiagrams = new Map();
@@ -925,8 +925,8 @@ async function api(method, path, body) {
       body:body === undefined ? undefined : JSON.stringify(body),
     });
   } catch (error) {
-    /* fetch rejects only when the request did not reach the server. The poll
-       loop decides whether the server is gone. */
+    /* fetch rejects only when the request never reached the server. Its
+       "Failed to fetch" text hides that cause. */
     const failure = new Error("the review server has stopped");
     failure.offline = true;
     throw failure;
@@ -952,8 +952,8 @@ const OFFLINE_MESSAGE = "The review server has stopped. Nothing on this page "
   + "can be saved or sent any more, including diagram edits. Copy any text you "
   + "still need, then ask the agent to reopen the review.";
 
-/* A stopped server breaks every request. Without this guard, each failed call
-   replaces the offline notice with a smaller error. */
+/* A stopped server breaks every request, so each failing call would otherwise
+   replace this notice with its own smaller complaint. */
 function showBanner(message) {
   if (offline) return;
   $("banner").textContent = message;
@@ -965,13 +965,13 @@ function stateClass(value) {
   return value.toLowerCase().replace(/\s+/g, "-");
 }
 
-/* Use this one check to decide if a control can still reach the server. */
+/* The one answer to "can this control still reach the server". */
 function sendingLocked() {
   return offline || !!state?.ended;
 }
 
-/* Only an ended session locks the draft box. After a server stop, the reviewer
-   can still copy unsent text from the box. */
+/* Only an ended session locks the draft box. A stopped server keeps it
+   editable, so the reviewer can copy unsent text. */
 function lockSending() {
   const locked = sendingLocked();
   [$("annBtn"), $("editBtn"), $("chatAction"), $("chatSend"), $("chatQueue"),
@@ -988,8 +988,7 @@ function lockSending() {
 
 function setOffline(value) {
   if (offline === value) return;
-  // showBanner ignores calls while offline is true. So the banner shows before
-  // the flag is set and clears after the flag clears.
+  // The banner writes before the flag blocks it, and clears after.
   if (value) {
     showBanner(OFFLINE_MESSAGE);
     offline = true;
@@ -1017,8 +1016,8 @@ function errorMessage(error) {
   return error && error.message ? error.message : "The action could not be completed.";
 }
 
-/* The menu height changes with its item count, and the composer menu opens near
-   the bottom edge. */
+/* Menus hold different numbers of items, and the composer menu opens near the
+   bottom edge, so the open menu is measured. */
 function positionMenu(trigger, menu) {
   const rect = trigger.getBoundingClientRect();
   const height = menu.offsetHeight;
@@ -1070,8 +1069,8 @@ function attachMenu(trigger, menu) {
       trigger.focus();
     }
   });
-  /* The capture handler runs before the item handler, so an item that moves
-     focus to the next control keeps that focus. */
+  /* Capture runs before the item's handler, so an item that moves focus
+     elsewhere writes last and keeps focus there. */
   menu.addEventListener("click", event => {
     if (!event.target.closest('[role="menuitem"]')) return;
     menu.hidePopover();
@@ -1092,29 +1091,26 @@ document.title = `${B.name} · Artifact Review`;
 art.src = "/artifact";
 
 function resetCurtain() {
-  auditRun += 1;
-  const run = auditRun;
+  clearTimeout(curtainTimer);
   $("curtain").hidden = false;
   $("curtainCard").classList.remove("blocked");
   $("curtainTitle").textContent = "Checking the artifact…";
   $("curtainSummary").textContent = "The review opens as soon as the first visual integrity check completes.";
   $("curtainList").textContent = "";
   $("showAnyway").hidden = true;
-  setTimeout(() => {
-    if (run === auditRun && !$("curtain").hidden) {
-      $("curtain").hidden = true;
-      announce("The layout check timed out. The artifact is available for manual review.");
-    }
+  curtainTimer = setTimeout(() => {
+    $("curtain").hidden = true;
+    announce("The layout check timed out. The artifact is available for manual review.");
   }, 4000);
 }
 
 function liftCurtain() {
+  clearTimeout(curtainTimer);
   $("curtain").hidden = true;
 }
 
 function showBlocked(findings) {
-  // A proven failure stays on screen, so cancel the pending check timeout.
-  auditRun += 1;
+  clearTimeout(curtainTimer);
   const severe = findings.filter(finding => finding.severity === "severe");
   $("curtain").hidden = false;
   $("curtainCard").classList.add("blocked");
@@ -1147,16 +1143,17 @@ $("showAnyway").addEventListener("click", async () => {
   }
 });
 
-/* Phone and tablet audit passes run behind the boot curtain. These passes find
- * layout breaks that show only on small screens. */
+/* The frame narrows to phone and tablet widths behind the curtain, so a
+ * layout that breaks only on a phone reaches the agent. */
 
 const VIEWPORT_PASSES = [
   { width:360, cls:"mobile", label:"Mobile" },
   { width:800, cls:"compact", label:"Tablet" },
 ];
 let pendingAuditPass = null;
-// A reload starts a new viewport audit, and the older one must stop and post nothing.
-let viewportRun = 0;
+// The SDK can report twice for one load. A reload clears this, because the
+// passes measured the previous bytes.
+let viewportFindingsPromise = null;
 
 // The viewport class comes from the pass that ran, not from the width the
 // artifact reported back.
@@ -1181,13 +1178,14 @@ function dedupFindings(findings) {
   });
 }
 
-// The token stops a late reply from a timed-out pass from settling a later pass.
+// Passes run one at a time. The token stops a late reply from a timed-out
+// pass from settling a later pass.
 function requestAuditPass() {
   return new Promise(resolve => {
     const token = Math.random().toString(36).slice(2);
     const settle = findings => {
       clearTimeout(timer);
-      if (pendingAuditPass?.token === token) pendingAuditPass = null;
+      pendingAuditPass = null;
       resolve(findings);
     };
     const timer = setTimeout(() => settle([]), 2000);
@@ -1200,17 +1198,14 @@ function requestAuditPass() {
   });
 }
 
-async function collectViewportFindings(run) {
+async function collectViewportFindings() {
   const collected = [];
   for (const pass of VIEWPORT_PASSES) {
-    if (run !== viewportRun) return null;
     art.style.width = `${pass.width}px`;
     // Two frames let the narrowed layout settle before it is measured.
     await new Promise(resolve => requestAnimationFrame(() =>
       requestAnimationFrame(resolve)));
-    const findings = await requestAuditPass();
-    if (run !== viewportRun) return null;
-    collected.push(...tagViewport(findings, pass));
+    collected.push(...tagViewport(await requestAuditPass(), pass));
   }
   art.style.removeProperty("width");
   return collected;
@@ -1226,13 +1221,18 @@ window.addEventListener("message", async event => {
     pendingAuditPass.settle(message.findings || []);
   }
   if (message.type === "audit-done") {
+    // The time limit covers only the wait for this report. Each viewport pass
+    // has its own limit.
+    clearTimeout(curtainTimer);
     try {
-      const viewportFindings = await collectViewportFindings(++viewportRun);
-      if (!viewportFindings) return;
+      const passes = viewportFindingsPromise ||= collectViewportFindings();
       const findings = dedupFindings([
         ...tagViewport(message.findings || []),
-        ...viewportFindings,
+        ...await passes,
       ]);
+      // A reload during the passes clears the promise, so these findings
+      // describe bytes that are no longer on screen.
+      if (passes !== viewportFindingsPromise) return;
       const result = await api("POST", "/audit", { findings });
       if (result.status === "blocked") showBlocked(findings);
       else liftCurtain();
@@ -1336,14 +1336,14 @@ document.addEventListener("keydown", event => {
 function openAnnotation(item, rect, context) {
   const host = $("pop");
   const note = $("popText");
-  // A new pick during delivery would give the request in flight a different
-  // element.
+  // Retargeting mid-delivery would hand the request in flight a different
+  // element, so the pick is dropped and the reviewer is told why.
   if (popSending) {
     announce("The previous note is still being delivered. Pick again once it lands.");
     return;
   }
-  // A typed note that the reviewer has not delivered moves to the new target.
-  // Only closeAnnotation empties the note field.
+  // An undelivered note moves to the new target. Only closeAnnotation empties
+  // the field.
   const carried = !host.hidden && note.value.trim();
   popItem = item;
   $("popCtx").textContent = context || item.selector;
@@ -1406,12 +1406,12 @@ async function submitAnnotation(mode) {
 $("popSend").addEventListener("click", () => submitAnnotation("send"));
 $("popQueue").addEventListener("click", () => submitAnnotation("queue"));
 
-/* If the server refuses an edit, the page restores the original text, so the
+/* When the queue refuses an edit, the artifact's own text goes back, so the
    page never shows a change that nobody keeps. */
 async function queueTextEdit(item) {
   try {
-    // baseVersion is the version on screen, not the current file version. A
-    // save must know which artifact the reviewer saw.
+    // A save must know which artifact version the reviewer saw, not the
+    // version of the file now.
     const result = await api("POST", "/queue", {
       item:{ ...item, baseVersion:loadedArtifactVersion ?? state?.version },
     });
@@ -1450,8 +1450,8 @@ function textEditChip(item) {
   return TEXT_EDIT_CHIPS[`${item.action}:${item.scope}`] || "Edited";
 }
 
-/* The preview strikes the old text and underlines the new text, as the artifact
-   shows them to the reviewer. */
+/* Old text struck, new text underlined: the same before-and-after the reviewer
+   is looking at in the artifact. */
 function textEditPreview(item) {
   const removed = document.createElement("del");
   removed.textContent = item.before || "";
@@ -1520,7 +1520,7 @@ function renderQueue(queue) {
     remove.addEventListener("click", async () => {
       try {
         await api("POST", "/unqueue", { qid:item.qid });
-        // The artifact shows a queued edit until the reviewer removes its draft row.
+        // Removing the row is what puts the artifact's own text back.
         if (edit) toArtifact({ type:"revert-text-edit", editId:item.editId });
         announce("Draft removed.");
       } catch (error) {
@@ -1543,7 +1543,7 @@ function renderQueue(queue) {
   syncComposerAction(queue);
 }
 
-/* "Save or send" appears only when the review holds a text edit that the
+/* "Save or send" shows only when the review holds a text change that the
    reviewer can write into the artifact. */
 function syncComposerAction(queue) {
   const edits = queue.filter(item => item.kind === "text-edit").length;
@@ -1703,8 +1703,8 @@ async function submitChat(mode) {
 $("chatSend").addEventListener("click", () => submitChat("send"));
 $("chatQueue").addEventListener("click", () => submitChat("queue"));
 
-/* The server refuses an edit if its original text does not occur exactly once,
-   or the artifact changed. Refused edits stay drafted. */
+/* The server refuses an edit on a changed artifact or with ambiguous original
+   text. A refused edit stays drafted for the agent. */
 $("chatApply").addEventListener("click", async () => {
   setComposerBusy(true);
   actionState("composerState", "Saving", "Saving the edits into the artifact.");
@@ -1734,7 +1734,8 @@ function pendingFeedback() {
   return !!$("chat").value.trim() || !!state?.queue?.length;
 }
 
-/* The last menu item names what it will deliver. */
+/* The last item names what it will actually deliver. With nothing drafted it
+   reads "End review". */
 $("chatMenu").addEventListener("beforetoggle", event => {
   if (event.newState !== "open") return;
   const pending = pendingFeedback();
@@ -1831,8 +1832,8 @@ function applyState(next) {
     paintedQueue = queueKey;
     renderQueue(next.queue || []);
   }
-  /* A draft from any source, including an annotation, makes the "Nothing to
-     send" warning false. */
+  /* A draft from any source, an annotation included, makes the empty send
+     warning untrue. */
   if ((next.queue || []).length) clearState("composerState", "Nothing to send");
   if (feedKey !== paintedFeed) {
     paintedFeed = feedKey;
@@ -1843,8 +1844,8 @@ function applyState(next) {
   lockSending();
   if (ended) {
     setAnnotate(false);
-    // An editor that is open now belongs to the ended review. Its teardown flush
-    // must never go into the next review.
+    // An open editor belongs to the ended review. Its teardown flush must
+    // never reach the next review.
     inlineDiagrams.forEach(record => { record.retired = true; });
     showBanner(`Review ended by ${next.ended_by}. This session is read-only.`);
   }
@@ -1875,7 +1876,7 @@ async function stateLoop() {
         if (error.offline) setOffline(true);
         else showBanner("The session server is not responding. Your unsent text is preserved in this tab.");
       }
-      // A stopped server will not answer, so the loop polls less often while offline.
+      // Backing off further once the server is gone. Nothing there will answer.
       await new Promise(resolve =>
         setTimeout(resolve, Math.min(offline ? 30000 : 4000, deadPolls * 750)));
     }
@@ -1931,6 +1932,7 @@ async function reloadArtifactOnce(version) {
   await flushInlineDiagrams("artifact-reload");
   const scrollY = await requestArtifactScroll();
   resetCurtain();
+  viewportFindingsPromise = null;
   mermaidBlocks = [];
   inlineGeneration += 1;
   inlineDiagrams.clear();
@@ -1959,8 +1961,8 @@ async function reloadArtifactOnce(version) {
   await new Promise(resolve => setTimeout(resolve, 120));
   try {
     art.contentWindow.postMessage({ arev:true, type:"set-scroll", y:scrollY }, "*");
-    // A new artifact document starts with both modes off, so the page must send
-    // the active top-bar mode again.
+    // A new artifact document starts in neither mode, so the mode that the
+    // top bar shows is turned on again.
     if (annotating) {
       art.contentWindow.postMessage({ arev:true, type:"set-annotate", on:true }, "*");
     }
@@ -1989,8 +1991,8 @@ setInterval(() => {
   if (state) renderAgent(state.agent);
 }, 5000);
 
-/* Only this controller holds the bearer token. The sandboxed editor frames send
-   persistence and feedback requests through this controller. */
+/* Editors run in sandboxed frames. Only this controller holds the bearer token,
+   so it saves and delivers for those frames. */
 
 function normalizeMermaidSource(source) {
   return String(source || "").replace(/\r\n?/g, "\n").trim();
@@ -2077,8 +2079,8 @@ async function prepareInlineDiagrams(blocks) {
   }));
 }
 
-// The SDK names each diagram from the artifact markup. The id is a fallback
-// for a block without a name.
+// The SDK names each diagram from the artifact's markup. The id is used only
+// when the message carries no name.
 function diagramName(block) {
   return String(block?.title || "").trim().slice(0, 80) ||
     String(block?.id || "");
@@ -2152,6 +2154,7 @@ async function saveInlineDiagram(record, message) {
   }
 }
 
+// Builds the headline from whatever counters the whiteboard sent.
 function describeEditStats(stats) {
   return Object.entries(stats || {})
     .filter(([, count]) => Number(count) > 0)
@@ -2163,15 +2166,15 @@ function describeEditStats(stats) {
 async function submitInlineDiagram(record, message) {
   const mode = message.mode;
   const note = String(message.summary || "").trim();
-  // The iframe message is untrusted, so this code applies the limits again.
+  // The iframe message is untrusted, so the limits are enforced here too.
   // 40 and 200 mirror SUMMARY_MAX_LINES and SUMMARY_MAX_LINE_CHARS in
   // tooling/whiteboard-entry.mjs.
   const summaryLines = (Array.isArray(message.summary_lines) ? message.summary_lines : [])
     .filter(line => typeof line === "string" && line.trim())
     .slice(0, 40)
     .map(line => line.slice(0, 200));
-  // The automatic per-element diff always goes with the note, so an empty note
-  // still tells the agent what changed.
+  // The per-element diff is always sent, so an empty note still tells the
+  // agent what changed.
   const summary = note ||
     describeEditStats(message.stats) ||
     "diagram reviewed with no element changes";
