@@ -1155,6 +1155,8 @@ const VIEWPORT_PASSES = [
   { width:800, cls:"compact", label:"Tablet" },
 ];
 let pendingAuditPass = null;
+// A reload starts a new viewport audit, and the older one must stop and post nothing.
+let viewportRun = 0;
 
 // The viewport class comes from the pass that ran, not from the width the
 // artifact reported back.
@@ -1185,7 +1187,7 @@ function requestAuditPass() {
     const token = Math.random().toString(36).slice(2);
     const settle = findings => {
       clearTimeout(timer);
-      pendingAuditPass = null;
+      if (pendingAuditPass?.token === token) pendingAuditPass = null;
       resolve(findings);
     };
     const timer = setTimeout(() => settle([]), 2000);
@@ -1198,14 +1200,17 @@ function requestAuditPass() {
   });
 }
 
-async function collectViewportFindings() {
+async function collectViewportFindings(run) {
   const collected = [];
   for (const pass of VIEWPORT_PASSES) {
+    if (run !== viewportRun) return null;
     art.style.width = `${pass.width}px`;
     // Two frames let the narrowed layout settle before it is measured.
     await new Promise(resolve => requestAnimationFrame(() =>
       requestAnimationFrame(resolve)));
-    collected.push(...tagViewport(await requestAuditPass(), pass));
+    const findings = await requestAuditPass();
+    if (run !== viewportRun) return null;
+    collected.push(...tagViewport(findings, pass));
   }
   art.style.removeProperty("width");
   return collected;
@@ -1222,9 +1227,11 @@ window.addEventListener("message", async event => {
   }
   if (message.type === "audit-done") {
     try {
+      const viewportFindings = await collectViewportFindings(++viewportRun);
+      if (!viewportFindings) return;
       const findings = dedupFindings([
         ...tagViewport(message.findings || []),
-        ...await collectViewportFindings(),
+        ...viewportFindings,
       ]);
       const result = await api("POST", "/audit", { findings });
       if (result.status === "blocked") showBlocked(findings);
