@@ -1,7 +1,7 @@
 import { Given, Then, expect } from '../support/bdd.js';
 
 // The fixtures are listed so other "a ... artifact" steps cannot collide here.
-Given(/^a (broken|clean|diagram-features|many-diagrams|mermaid-broken|themed|viewport-overflow) artifact$/,
+Given(/^a (broken|clean|diagram-features|many-diagrams|mermaid-broken|mermaid-long-line|stranded-control|scroll-box|themed|viewport-overflow) artifact$/,
   async ({ artifact }, kind) => {
     await artifact.from(`${kind}.html`);
   });

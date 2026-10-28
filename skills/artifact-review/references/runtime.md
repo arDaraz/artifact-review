@@ -16,7 +16,8 @@ playbook as a requirement for content inside the marked region. Do not write
 review state, generated whiteboard scenes, or screenshots into the skill.
 
 The review server renders every `<pre class="mermaid">` block in the page
-offline with its own pinned Mermaid; artifacts must not load a Mermaid CDN.
+offline with its own pinned Mermaid, so an artifact must not load a second
+Mermaid under the review server.
 Diagram colors, text, and font derive from the page's rendered palette, and
 diagrams re-render automatically when the viewer flips the page theme, so
 never hardcode a Mermaid theme. Rendered diagrams zoom on a Ctrl or Cmd wheel
@@ -28,6 +29,28 @@ instead. Every node gets a stable identity key that survives
 re-renders. Flowchart, sequence, class, ER, and state Mermaid diagrams become
 editable shapes. Other valid Mermaid types use a labeled image-annotation
 fallback.
+
+A page that must also draw its diagrams when opened from disk loads its own
+Mermaid only under `file:`, with a dynamic import:
+
+```html
+<script type="module">
+  if (location.protocol === "file:") {
+    const { default: mermaid } = await import(
+      "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs");
+    mermaid.initialize({ startOnLoad: false });
+    await mermaid.run();
+  }
+</script>
+```
+
+Call `mermaid.run()` yourself. `startOnLoad` waits for the window `load` event,
+which has already fired when the dynamic import resolves.
+
+Under the review server that branch never runs. `check` fails a `<script src>`
+or a static `import` of Mermaid, because both always run and add a second
+renderer. `check` warns on a dynamic `import()` of Mermaid as a reminder to keep
+the import and every Mermaid call inside the `file:` branch.
 
 The boot layout audit runs at desktop width and again at phone (360px) and
 tablet (800px) widths behind the curtain. Findings carry a `viewportClass`

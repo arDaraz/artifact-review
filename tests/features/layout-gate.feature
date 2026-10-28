@@ -15,6 +15,8 @@ Feature: Layout gate
       | a clean artifact                            |
       | a scaffolded artifact                       |
       | a scaffolded artifact whose cards hold code |
+      | a scroll-box artifact                       |
+      | a mermaid-long-line artifact                |
 
   Scenario: Saving a broken layout blocks the review and tells the agent
     Given a clean artifact
@@ -40,5 +42,20 @@ Feature: Layout gate
     Then the audit proves a severe overflow on a phone
     And the audit finds no overflow on the desktop pass
     And the curtain shows the phone evidence
+    And the curtain stays up after the check timeout
     And the artifact frame width is restored
     And the agent hears about the phone overflow
+
+  Scenario: Fixing a phone-only overflow clears the gate
+    Given a viewport-overflow artifact
+    And the reviewer opens a review session the layout gate blocks
+    When the agent replaces the artifact with "clean.html"
+    Then the layout gate reports "clear"
+    And the review is not blocked
+
+  Scenario: A control pushed outside its scroll box is still unreachable
+    Given a stranded-control artifact
+    And the reviewer opens a review session the layout gate blocks
+    Then the agent receives a layout event
+    And the layout event names the kinds:
+      | unreachable-control |

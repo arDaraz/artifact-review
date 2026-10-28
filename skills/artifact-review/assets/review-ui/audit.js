@@ -48,6 +48,24 @@ window.__arevAudit = function runAudit(doc, win) {
     return tag === 'BUTTON' || tag === 'A' || tag === 'INPUT' || tag === 'SELECT' || el.hasAttribute('data-arev-action');
   }
 
+  // A control scrolls only inside its nearest scroll box on each axis, so
+  // that box sets the reachable area, not the page.
+  function scrollArea(el, axis) {
+    var x = axis === 'x';
+    for (var node = el.parentElement; node && node !== doc.body; node = node.parentElement) {
+      var overflow = win.getComputedStyle(node)[x ? 'overflowX' : 'overflowY'];
+      if (overflow === 'auto' || overflow === 'scroll') {
+        var box = node.getBoundingClientRect();
+        return x
+          ? { start: box.left + win.scrollX - node.scrollLeft, size: node.scrollWidth }
+          : { start: box.top + win.scrollY - node.scrollTop, size: node.scrollHeight };
+      }
+    }
+    return x
+      ? { start: 0, size: doc.documentElement.scrollWidth }
+      : { start: 0, size: doc.documentElement.scrollHeight };
+  }
+
   function describeControl(el) {
     var label = el.tagName.toLowerCase();
     if (el.hasAttribute('data-arev-action')) label += '[data-arev-action="' + el.getAttribute('data-arev-action') + '"]';
@@ -68,7 +86,6 @@ window.__arevAudit = function runAudit(doc, win) {
 
   if (!doc.body) return findings;
 
-  // 1. escaped markup rendered as visible text
   var MARKUP_RE = /<\/?[a-zA-Z][a-zA-Z0-9]*(?:\s[^<>]*)?>|&lt;\/?[a-zA-Z]|&amp;lt;/;
   var walker = doc.createTreeWalker(doc.body, 4 /* SHOW_TEXT */, null);
   var tnode, markupHits = 0;
@@ -88,7 +105,6 @@ window.__arevAudit = function runAudit(doc, win) {
     markupHits++;
   }
 
-  // 2. page-level horizontal overflow
   var dw = doc.documentElement.scrollWidth;
   if (dw - vw > 24) {
     push({
@@ -101,8 +117,6 @@ window.__arevAudit = function runAudit(doc, win) {
     });
   }
 
-  // 3 & 4. per-element clipped-text and unreachable-control, plus candidate
-  // collection for the occlusion sample
   var all = doc.querySelectorAll('*');
   var n = Math.min(all.length, MAX_ELS);
   var textCandidates = [];
@@ -111,6 +125,8 @@ window.__arevAudit = function runAudit(doc, win) {
     var el = all[i];
     var tag = el.tagName;
     if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') continue;
+    // The review tool's own controls are not part of the artifact layout.
+    if (el.closest('[data-arev-internal]')) continue;
     var cs = win.getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden') continue;
     var r = el.getBoundingClientRect();
@@ -123,9 +139,10 @@ window.__arevAudit = function runAudit(doc, win) {
         reason = 'pointer-events is none on the element itself';
       } else {
         var pageLeft = r.left + win.scrollX, pageTop = r.top + win.scrollY;
-        var docW = doc.documentElement.scrollWidth, docH = doc.documentElement.scrollHeight;
-        if (pageLeft + r.width < 0 || pageLeft > docW || pageTop + r.height < 0 || pageTop > docH) {
-          reason = 'it sits fully outside the document\'s scrollable area';
+        var areaX = scrollArea(el, 'x'), areaY = scrollArea(el, 'y');
+        if (pageLeft + r.width < areaX.start || pageLeft > areaX.start + areaX.size ||
+            pageTop + r.height < areaY.start || pageTop > areaY.start + areaY.size) {
+          reason = 'it sits fully outside its scrollable area';
         }
       }
       if (reason) {
@@ -172,7 +189,6 @@ window.__arevAudit = function runAudit(doc, win) {
     }
   }
 
-  // 5. occlusion - sample up to 12 evenly spaced visible text blocks
   if (textCandidates.length) {
     var sampleCount = Math.min(12, textCandidates.length);
     var step = textCandidates.length / sampleCount;

@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>stranded control fixture</title>
+<style>
+  body { font-family: sans-serif; margin: 0; padding: 16px; }
+  /* A scroll box cannot scroll to a negative offset, so this button is out
+     of reach even though it sits inside one. */
+  .shell { overflow-y: auto; height: 300px; position: relative; }
+  .shell button { position: absolute; left: -3000px; top: 0; }
+</style>
+</head>
+<body>
+  <h1>Control pushed out of its scroll box</h1>
+  <div class="shell">
+    <p>The approve button below is placed where nobody can scroll to it.</p>
+    <button data-arev-action="approve">Approve plan</button>
+  </div>
+</body>
+</html>

@@ -343,16 +343,15 @@
     flex:1;
     display:flex;
     flex-direction:column;
-    /* On a rail too short for even the headings and the composer, the panel
-       scrolls so the composer stays reachable instead of being cut off. */
+    /* On a rail too short for the headings and the composer, the panel scrolls
+       so the composer stays reachable. */
     overflow:hidden auto;
     visibility:visible;
     opacity:1;
     transition:opacity 100ms ease-out;
   }
-  /* A rail section keeps its heading and one row of its list, and it clips its own
-     content instead of painting over the section below. Its lists scroll, and once
-     even these floors do not fit, the panel above scrolls. */
+  /* A rail section keeps its heading and one list row. The section clips its
+     content instead of covering the next section. */
   .rail-panel > section {
     min-height:var(--rail-section-min);
     display:flex;
@@ -361,8 +360,8 @@
   }
   /* display:flex above outranks the browser's own rule for a hidden element. */
   .rail-panel > section[hidden] { display:none }
-  /* An auto basis, not the 0 of a plain flex:1. On a crowded rail a 0 basis leaves
-     this section its floor and nothing more, hiding every entry the agent sent. */
+  /* On a crowded rail, a 0 basis gives this section only its floor and hides
+     every entry the agent sent. */
   .activity-section { flex:1 1 auto }
   .rail-scrim { display:none }
   html[data-review-rail="collapsed"] .review-rail {
@@ -415,13 +414,11 @@
     font-weight:650;
     text-align:center;
   }
-  /* A percentage cap resolves against a height the browser measured from the
-     uncapped list, so the section kept holding space the shortened list no
-     longer filled. A viewport cap is a real length and the section ends where
-     the list ends. */
+  /* A viewport cap is a fixed length, so the section ends where the list ends.
+     A percentage cap leaves empty space. */
   .drafts { max-height:34vh; overflow:auto }
-  /* The cap only stops a long queue pushing the section open, so the short
-     empty-state sentence is exempt and always reads in full. */
+  /* The cap exists only to stop a long queue from pushing the section open. The
+     short empty-state sentence always shows in full. */
   .drafts:has(.empty) { max-height:none }
   .draft-row {
     display:grid;
@@ -928,10 +925,8 @@ async function api(method, path, body) {
       body:body === undefined ? undefined : JSON.stringify(body),
     });
   } catch (error) {
-    /* fetch rejects only when the request never reached the server, so its
-       "Failed to fetch" names the browser call and hides the real cause. The
-       poll loop decides whether the server is gone; one dropped connection is
-       not enough. */
+    /* fetch rejects only when the request did not reach the server. The poll
+       loop decides whether the server is gone. */
     const failure = new Error("the review server has stopped");
     failure.offline = true;
     throw failure;
@@ -957,8 +952,8 @@ const OFFLINE_MESSAGE = "The review server has stopped. Nothing on this page "
   + "can be saved or sent any more, including diagram edits. Copy any text you "
   + "still need, then ask the agent to reopen the review.";
 
-/* A stopped server breaks every request, so each failing call would otherwise
-   replace this notice with its own smaller complaint. */
+/* A stopped server breaks every request. Without this guard, each failed call
+   replaces the offline notice with a smaller error. */
 function showBanner(message) {
   if (offline) return;
   $("banner").textContent = message;
@@ -970,13 +965,13 @@ function stateClass(value) {
   return value.toLowerCase().replace(/\s+/g, "-");
 }
 
-/* The one answer to "can this control still reach the server". */
+/* Use this one check to decide if a control can still reach the server. */
 function sendingLocked() {
   return offline || !!state?.ended;
 }
 
-/* The draft box is locked only for an ended session. A stopped server leaves
-   it editable so the reviewer can copy unsent text out. */
+/* Only an ended session locks the draft box. After a server stop, the reviewer
+   can still copy unsent text from the box. */
 function lockSending() {
   const locked = sendingLocked();
   [$("annBtn"), $("editBtn"), $("chatAction"), $("chatSend"), $("chatQueue"),
@@ -993,7 +988,8 @@ function lockSending() {
 
 function setOffline(value) {
   if (offline === value) return;
-  // The banner writes before the flag blocks it, and clears after.
+  // showBanner ignores calls while offline is true. So the banner shows before
+  // the flag is set and clears after the flag clears.
   if (value) {
     showBanner(OFFLINE_MESSAGE);
     offline = true;
@@ -1011,8 +1007,8 @@ function actionState(id, value, message) {
   if (message) announce(message);
 }
 
-/* Back to Draft from a state the reviewer just answered. Each caller names the
-   states it owns, so a queued draft never wipes a real delivery failure. */
+/* Each caller names the states it owns, so a queued draft never clears a real
+   delivery failure. */
 function clearState(id, ...states) {
   if (states.includes($(id).textContent)) actionState(id, "Draft");
 }
@@ -1021,8 +1017,8 @@ function errorMessage(error) {
   return error && error.message ? error.message : "The action could not be completed.";
 }
 
-/* Measure the open menu instead of assuming a height. Menus hold a different
-   number of items, and the composer menu opens near the bottom edge. */
+/* The menu height changes with its item count, and the composer menu opens near
+   the bottom edge. */
 function positionMenu(trigger, menu) {
   const rect = trigger.getBoundingClientRect();
   const height = menu.offsetHeight;
@@ -1074,8 +1070,8 @@ function attachMenu(trigger, menu) {
       trigger.focus();
     }
   });
-  /* Capture runs before the item's own handler, so an item that sends focus
-     where the reviewer must act next writes last and keeps it. */
+  /* The capture handler runs before the item handler, so an item that moves
+     focus to the next control keeps that focus. */
   menu.addEventListener("click", event => {
     if (!event.target.closest('[role="menuitem"]')) return;
     menu.hidePopover();
@@ -1117,6 +1113,8 @@ function liftCurtain() {
 }
 
 function showBlocked(findings) {
+  // A proven failure stays on screen, so cancel the pending check timeout.
+  auditRun += 1;
   const severe = findings.filter(finding => finding.severity === "severe");
   $("curtain").hidden = false;
   $("curtainCard").classList.add("blocked");
@@ -1149,17 +1147,14 @@ $("showAnyway").addEventListener("click", async () => {
   }
 });
 
-/* Extra audit passes at phone and tablet widths. The artifact iframe narrows
- * behind the boot curtain and the SDK re-runs the same proven-failure audit.
- * Findings come back tagged with the viewport class they were observed in,
- * so a diagram or table that only breaks on a phone still reaches the agent. */
+/* Phone and tablet audit passes run behind the boot curtain. These passes find
+ * layout breaks that show only on small screens. */
 
 const VIEWPORT_PASSES = [
   { width:360, cls:"mobile", label:"Mobile" },
   { width:800, cls:"compact", label:"Tablet" },
 ];
 let pendingAuditPass = null;
-let viewportFindingsPromise = null;
 
 // The viewport class comes from the pass that ran, not from the width the
 // artifact reported back.
@@ -1184,8 +1179,7 @@ function dedupFindings(findings) {
   });
 }
 
-// Passes run one at a time, so a single pending slot is enough. The token
-// stops a late reply from a timed-out pass from settling a later one.
+// The token stops a late reply from a timed-out pass from settling a later pass.
 function requestAuditPass() {
   return new Promise(resolve => {
     const token = Math.random().toString(36).slice(2);
@@ -1228,10 +1222,9 @@ window.addEventListener("message", async event => {
   }
   if (message.type === "audit-done") {
     try {
-      viewportFindingsPromise ||= collectViewportFindings();
       const findings = dedupFindings([
         ...tagViewport(message.findings || []),
-        ...await viewportFindingsPromise,
+        ...await collectViewportFindings(),
       ]);
       const result = await api("POST", "/audit", { findings });
       if (result.status === "blocked") showBlocked(findings);
@@ -1336,14 +1329,14 @@ document.addEventListener("keydown", event => {
 function openAnnotation(item, rect, context) {
   const host = $("pop");
   const note = $("popText");
-  // Retargeting mid-delivery would hand the request in flight a different
-  // element, so the pick is dropped and the reviewer is told why.
+  // A new pick during delivery would give the request in flight a different
+  // element.
   if (popSending) {
     announce("The previous note is still being delivered. Pick again once it lands.");
     return;
   }
-  // A note the reviewer typed and has not delivered moves to the new target
-  // instead of being thrown away. closeAnnotation is what empties the field.
+  // A typed note that the reviewer has not delivered moves to the new target.
+  // Only closeAnnotation empties the note field.
   const carried = !host.hidden && note.value.trim();
   popItem = item;
   $("popCtx").textContent = context || item.selector;
@@ -1406,13 +1399,12 @@ async function submitAnnotation(mode) {
 $("popSend").addEventListener("click", () => submitAnnotation("send"));
 $("popQueue").addEventListener("click", () => submitAnnotation("queue"));
 
-/* An edit only exists on screen until the server holds it. A queue that refuses
-   it puts the artifact's own text straight back, so the page never shows a
-   change no one is keeping. */
+/* If the server refuses an edit, the page restores the original text, so the
+   page never shows a change that nobody keeps. */
 async function queueTextEdit(item) {
   try {
-    // The version of the bytes on screen, not of the file right now. A save
-    // has to know which artifact the reviewer was actually looking at.
+    // baseVersion is the version on screen, not the current file version. A
+    // save must know which artifact the reviewer saw.
     const result = await api("POST", "/queue", {
       item:{ ...item, baseVersion:loadedArtifactVersion ?? state?.version },
     });
@@ -1451,8 +1443,8 @@ function textEditChip(item) {
   return TEXT_EDIT_CHIPS[`${item.action}:${item.scope}`] || "Edited";
 }
 
-/* Old text struck, new text underlined: the same before-and-after the reviewer
-   is looking at in the artifact. */
+/* The preview strikes the old text and underlines the new text, as the artifact
+   shows them to the reviewer. */
 function textEditPreview(item) {
   const removed = document.createElement("del");
   removed.textContent = item.before || "";
@@ -1521,7 +1513,7 @@ function renderQueue(queue) {
     remove.addEventListener("click", async () => {
       try {
         await api("POST", "/unqueue", { qid:item.qid });
-        // Removing the row is what puts the artifact's own text back.
+        // The artifact shows a queued edit until the reviewer removes its draft row.
         if (edit) toArtifact({ type:"revert-text-edit", editId:item.editId });
         announce("Draft removed.");
       } catch (error) {
@@ -1544,8 +1536,8 @@ function renderQueue(queue) {
   syncComposerAction(queue);
 }
 
-/* Two labels, each true. "Save or send" only appears when the review holds a
-   text change the reviewer could write into the artifact themselves. */
+/* "Save or send" appears only when the review holds a text edit that the
+   reviewer can write into the artifact. */
 function syncComposerAction(queue) {
   const edits = queue.filter(item => item.kind === "text-edit").length;
   $("chatActionLabel").textContent = edits ? "Save or send" : "Send or add";
@@ -1704,10 +1696,8 @@ async function submitChat(mode) {
 $("chatSend").addEventListener("click", () => submitChat("send"));
 $("chatQueue").addEventListener("click", () => submitChat("queue"));
 
-/* Saving writes the reviewer's own text into the artifact the agent owns, so
-   the server refuses any edit whose original text it cannot find exactly once,
-   and any edit drawn on an artifact that has since changed. Whatever it
-   refuses stays drafted for the agent to do instead. */
+/* The server refuses an edit if its original text does not occur exactly once,
+   or the artifact changed. Refused edits stay drafted. */
 $("chatApply").addEventListener("click", async () => {
   setComposerBusy(true);
   actionState("composerState", "Saving", "Saving the edits into the artifact.");
@@ -1737,8 +1727,7 @@ function pendingFeedback() {
   return !!$("chat").value.trim() || !!state?.queue?.length;
 }
 
-/* The last item names what it will actually deliver. With nothing drafted it
-   reads "End review". */
+/* The last menu item names what it will deliver. */
 $("chatMenu").addEventListener("beforetoggle", event => {
   if (event.newState !== "open") return;
   const pending = pendingFeedback();
@@ -1835,8 +1824,8 @@ function applyState(next) {
     paintedQueue = queueKey;
     renderQueue(next.queue || []);
   }
-  /* A draft from any source, an annotation included, makes the empty send
-     warning untrue. */
+  /* A draft from any source, including an annotation, makes the "Nothing to
+     send" warning false. */
   if ((next.queue || []).length) clearState("composerState", "Nothing to send");
   if (feedKey !== paintedFeed) {
     paintedFeed = feedKey;
@@ -1847,9 +1836,8 @@ function applyState(next) {
   lockSending();
   if (ended) {
     setAnnotate(false);
-    // An editor open at this moment belongs to the review that just ended. Its
-    // teardown flush must never land in the next one, and reopening tears every
-    // editor down while the session is live again.
+    // An editor that is open now belongs to the ended review. Its teardown flush
+    // must never go into the next review.
     inlineDiagrams.forEach(record => { record.retired = true; });
     showBanner(`Review ended by ${next.ended_by}. This session is read-only.`);
   }
@@ -1880,7 +1868,7 @@ async function stateLoop() {
         if (error.offline) setOffline(true);
         else showBanner("The session server is not responding. Your unsent text is preserved in this tab.");
       }
-      // Backing off further once the server is gone. Nothing there will answer.
+      // A stopped server will not answer, so the loop polls less often while offline.
       await new Promise(resolve =>
         setTimeout(resolve, Math.min(offline ? 30000 : 4000, deadPolls * 750)));
     }
@@ -1964,8 +1952,8 @@ async function reloadArtifactOnce(version) {
   await new Promise(resolve => setTimeout(resolve, 120));
   try {
     art.contentWindow.postMessage({ arev:true, type:"set-scroll", y:scrollY }, "*");
-    // A fresh artifact document starts in neither mode, so whichever one the
-    // top bar still shows has to be turned on again inside it.
+    // A new artifact document starts with both modes off, so the page must send
+    // the active top-bar mode again.
     if (annotating) {
       art.contentWindow.postMessage({ arev:true, type:"set-annotate", on:true }, "*");
     }
@@ -1994,9 +1982,8 @@ setInterval(() => {
   if (state) renderAgent(state.agent);
 }, 5000);
 
-/* Mermaid remains authoritative in the HTML. Each editor runs in a sandboxed
-   frame inside the artifact. Only this controller owns the bearer token and
-   brokers authenticated persistence and feedback delivery for those frames. */
+/* Only this controller holds the bearer token. The sandboxed editor frames send
+   persistence and feedback requests through this controller. */
 
 function normalizeMermaidSource(source) {
   return String(source || "").replace(/\r\n?/g, "\n").trim();
@@ -2083,8 +2070,8 @@ async function prepareInlineDiagrams(blocks) {
   }));
 }
 
-// The SDK names each diagram from the artifact's own markup. The id is the
-// last resort, for a block whose message carried no name.
+// The SDK names each diagram from the artifact markup. The id is a fallback
+// for a block without a name.
 function diagramName(block) {
   return String(block?.title || "").trim().slice(0, 80) ||
     String(block?.id || "");
@@ -2158,7 +2145,6 @@ async function saveInlineDiagram(record, message) {
   }
 }
 
-// Builds the headline from whatever counters the whiteboard sent.
 function describeEditStats(stats) {
   return Object.entries(stats || {})
     .filter(([, count]) => Number(count) > 0)
@@ -2170,15 +2156,15 @@ function describeEditStats(stats) {
 async function submitInlineDiagram(record, message) {
   const mode = message.mode;
   const note = String(message.summary || "").trim();
-  // The iframe message is untrusted, so the limits are enforced here too.
+  // The iframe message is untrusted, so this code applies the limits again.
   // 40 and 200 mirror SUMMARY_MAX_LINES and SUMMARY_MAX_LINE_CHARS in
   // tooling/whiteboard-entry.mjs.
   const summaryLines = (Array.isArray(message.summary_lines) ? message.summary_lines : [])
     .filter(line => typeof line === "string" && line.trim())
     .slice(0, 40)
     .map(line => line.slice(0, 200));
-  // The note is the reviewer's intent. The automatic per-element diff always
-  // rides along, so an empty note still tells the agent exactly what changed.
+  // The automatic per-element diff always goes with the note, so an empty note
+  // still tells the agent what changed.
   const summary = note ||
     describeEditStats(message.stats) ||
     "diagram reviewed with no element changes";

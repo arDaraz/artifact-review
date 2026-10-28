@@ -1,12 +1,12 @@
 Feature: Unrendered diagrams
 
   A Mermaid block that fails to render leaves its source showing as plain text.
-  The page audit runs before the offline renderer, so a second pass is the only
-  thing that can tell the agent the diagram is missing.
+  The review server reports it as a severe failure, so the review stays blocked
+  until the agent fixes it or the reviewer chooses to look anyway.
 
   Background:
     Given a mermaid-broken artifact
-    And the reviewer has the review session open
+    And the reviewer opens a review session the layout gate blocks
 
   Scenario: A diagram that never rendered reaches the agent on its own
     Then the "works" diagram rendered offline

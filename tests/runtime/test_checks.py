@@ -100,6 +100,32 @@ class DiagramMarkupTests(unittest.TestCase):
             '<script src="https://cdn.example/mermaid.min.js"></script>')
         self.assertIn("mermaid-cdn-script", self.kinds(report))
 
+    def test_inline_static_mermaid_import_is_an_error(self):
+        report = self.check(
+            '<pre class="mermaid" id="d">flowchart LR\n a --> b</pre>'
+            '<script type="module">import mermaid from '
+            '"https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";'
+            '</script>')
+        self.assertIn("mermaid-cdn-script", self.kinds(report))
+
+    def test_dynamic_mermaid_import_is_only_a_warning(self):
+        # A file: guard keeps this copy off the review server, so a page
+        # opened from disk still draws its diagrams.
+        report = self.check(
+            '<pre class="mermaid" id="d">flowchart LR\n a --> b</pre>'
+            '<script type="module">if (location.protocol === "file:") {'
+            ' const { default: mermaid } = await import('
+            '"https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs");'
+            ' mermaid.initialize({ startOnLoad: true }); }</script>')
+        self.assertIn("mermaid-dynamic-import", self.kinds(report))
+        self.assertTrue(report["ok"])
+
+    def test_inline_import_of_another_host_is_an_external_script(self):
+        report = self.check(
+            '<script type="module">import "https://cdn.example/chart.js";'
+            '</script>')
+        self.assertIn("external-script", self.kinds(report))
+
     def test_unrenderable_source_is_an_error(self):
         report = self.check('<pre class="mermaid" id="d">a --> b</pre>')
         self.assertIn("diagram-unknown-type", self.kinds(report))

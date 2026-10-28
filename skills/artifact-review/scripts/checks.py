@@ -1,15 +1,8 @@
 #!/usr/bin/env python3
-"""Static checks that hold an authored artifact to its rules and its sources.
+"""Static checks on an authored artifact file.
 
-The browser audit in ``audit.js`` only sees what rendering produced, and it
-only runs once a reviewer already has the page open. These checks read the
-authored file instead, so three failures are caught before anyone looks at it:
-a diagram built from styled boxes instead of Mermaid, a diagram drawn with the
-wrong Mermaid type, and a source document whose sections the artifact silently
-skipped.
-
-Nothing here knows anything about a particular document. Sections come from the
-source's own headings, and coverage is decided by the words those headings use.
+The checks find hand-built diagrams, wrong Mermaid types, and skipped source
+sections before review.
 """
 
 import json
@@ -20,22 +13,27 @@ from html.parser import HTMLParser
 
 MAX_LISTED = 40
 MAX_DISCOVERED_SOURCES = 3
-# An explainer names the document it explains near the top. Reading only the
-# opening text keeps discovery from picking up every file the body mentions.
+# Discovery reads only the opening text, because an explainer names its subject
+# document near the top.
 INTRO_CHARS = 1200
 # Shortest word allowed to match a longer one by prefix, so "arch" can satisfy
 # "architecture" without "on" satisfying "onboarding".
 PREFIX_MIN = 4
 
-# Text that reads as a drawn connector rather than prose. Several of these
-# outside a code block mean someone drew a diagram by hand.
+# Text that looks like a drawn connector. Several matches outside a code block
+# mean that the author drew a diagram by hand.
 CONNECTOR_RE = re.compile(
     r"(?:^|\s)(?:-{1,2}>|<-{1,2}|=>|\|>)(?:\s|$)|[→←↑↓"
     r"⇒⟶▶┌└├│]|─{2,}")
-# Arrows only. Box-drawing characters are excluded because directory trees use
-# them, and a directory tree is not a flow worth diagramming.
+# Arrows only. Directory trees use box-drawing characters, and a directory tree
+# is not a flow to diagram.
 ARROW_RE = re.compile(r"(?:^|\s)(?:-{1,2}>|<-{1,2}|=>)(?:\s|$)|[→⇒⟶]")
 MIN_ARROWS_FOR_FLOW = 5
+# A static import always runs. A dynamic import() can sit behind a condition,
+# such as a file: protocol check.
+STATIC_IMPORT_RE = re.compile(
+    r"""\bimport\s*(?:[\w$*{},\s]+?\s*from\s*)?["']([^"']+)["']""")
+DYNAMIC_IMPORT_RE = re.compile(r"""\bimport\s*\(\s*["'`]([^"'`]+)["'`]""")
 
 # A heading using any of these words describes something with named steps or
 # named states, which is what a diagram is for.
@@ -67,8 +65,8 @@ STATE_WORDS = frozenset(("state", "states", "lifecycle", "transition",
 _SHAPE = (r"\[\[.*?\]\]|\[\(.*?\)\]|\(\(.*?\)\)|\{\{.*?\}\}"
           r"|\[.*?\]|\(.*?\)|\{.*?\}")
 _LABEL_RE = re.compile(_SHAPE + r"|\"(?:.*?)\"")
-# A node is an identifier immediately followed by its shape, which is how a
-# label is told apart from an edge label written between pipes.
+# A node is an identifier directly followed by its shape. This tells a node
+# label apart from an edge label between pipes.
 _NODE_RE = re.compile(r"([A-Za-z_][\w.-]*)\s*(" + _SHAPE + r")")
 _INIT_DIRECTIVE_RE = re.compile(r"%%\{\s*init\b[^}]*")
 _SECTION_NUMBER_RE = re.compile(r"\b\d+(?:\.\d+)*\b")
@@ -82,8 +80,6 @@ _MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 _MD_FENCE_RE = re.compile(r"^\s*(?:```|~~~)")
 _PATH_RE = re.compile(r"[\w.@+-]+(?:/[\w.@+-]+)*\.(?:md|markdown|rst|txt|html?)")
 
-
-# ------------------------------------------------------------------- words
 
 def _singular(word):
     if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
@@ -102,14 +98,11 @@ def heading_words(text):
     return words_of(_HEADING_NUMBER_RE.sub("", text or "", count=1))
 
 
-# --------------------------------------------------------------- artifact
-
 class _ArtifactParser(HTMLParser):
-    """Collect the authored structure an artifact check needs.
+    """Collect visible text for coverage matching.
 
-    Text is gathered twice on purpose: once as one visible stream for coverage
-    matching, and once per heading or Mermaid block so each diagram keeps the
-    heading and caption that explain it.
+    Also keep each Mermaid block with the heading and caption that explain the
+    block.
     """
 
     SKIP = frozenset(("script", "style", "noscript"))
@@ -123,14 +116,13 @@ class _ArtifactParser(HTMLParser):
         self.headings = []
         self.diagrams = []
         self.scripts = []
+        self.dynamic_imports = []
         self.counts = Counter()
         self.connector_hits = 0
         self._capture = None
         self._capture_kind = None
         self._capture_depth = 0
         self._caption_for = None
-
-    # -- helpers
 
     def _inside(self, names):
         return any(tag in names for tag, _ in self.open_tags)
@@ -140,8 +132,6 @@ class _ArtifactParser(HTMLParser):
 
     def _is_mermaid(self, tag, attrs):
         return tag in ("pre", "div") and "mermaid" in self._classes(attrs)
-
-    # -- parser hooks
 
     def handle_starttag(self, tag, attrs):
         mapping = dict(attrs)
@@ -202,6 +192,9 @@ class _ArtifactParser(HTMLParser):
     def handle_data(self, data):
         if self._capture is not None:
             self._capture.append(data)
+        if self.open_tags and self.open_tags[-1][0] == "script":
+            self.scripts.extend(STATIC_IMPORT_RE.findall(data))
+            self.dynamic_imports.extend(DYNAMIC_IMPORT_RE.findall(data))
         if self._inside(self.SKIP):
             return
         stripped = data.strip()
@@ -223,15 +216,13 @@ def analyse_artifact(text):
     visible = " ".join(parser.visible)
     for diagram in parser.diagrams:
         diagram.update(analyse_mermaid(diagram["source"]))
-        # The subject of a diagram is its heading, its id, and what it draws.
-        # The caption is left out here: captions run long and would let one
-        # diagram claim every section that shares a word with its prose.
+        # Captions are left out, because a long caption would let one diagram
+        # claim every section that shares a caption word.
         diagram["context_words"] = heading_words(" ".join((
             diagram["heading"], (diagram["id"] or "").replace("-", " "),
             " ".join(diagram["labels"]))))
-        # How the author describes the diagram, which is what decides whether
-        # it should have been a state diagram. Node labels are excluded so a
-        # box happening to say "state DB" does not count as a description.
+        # Node labels are left out, so a box that says "state DB" does not make
+        # the diagram look like a state diagram.
         described = f"{diagram['heading']} {diagram['caption']}"
         diagram["described_words"] = words_of(described)
         diagram["cited_sections"] = (
@@ -241,6 +232,7 @@ def analyse_artifact(text):
         "headings": parser.headings,
         "diagrams": parser.diagrams,
         "scripts": parser.scripts,
+        "dynamic_imports": parser.dynamic_imports,
         "counts": dict(parser.counts),
         "connector_hits": parser.connector_hits,
         "text": visible,
@@ -249,13 +241,10 @@ def analyse_artifact(text):
     }
 
 
-# ---------------------------------------------------------------- mermaid
-
 def analyse_mermaid(source):
     """Pull the declared type, node labels, and out-degree from Mermaid text.
 
-    This is deliberately loose. Everything it feeds is a warning, so a line it
-    fails to understand costs a missed hint and never a false failure.
+    The parse is loose, because each result feeds only a warning.
     """
     lines = [line for line in source.splitlines() if line.strip()]
     declared = ""
@@ -301,8 +290,6 @@ def analyse_mermaid(source):
     }
 
 
-# ----------------------------------------------------------------- source
-
 def _markdown_headings(lines):
     headings = []
     fenced = False
@@ -331,10 +318,9 @@ def _html_headings(text):
 
 
 def _section_level(headings):
-    """Pick the level that carries a document's real sections.
+    """Pick the heading level of the document's real sections.
 
-    A lone top heading is the document title, so the sections sit one level
-    below it. Anything else is already the section level.
+    A single top heading is the title, so the sections are one level below.
     """
     if not headings:
         return 0
@@ -380,21 +366,16 @@ def _leading_number(text):
 
 
 def _is_diagrammable(words, body_arrows=0):
-    """Decide whether a source heading describes something worth drawing.
+    """Decide whether a source heading describes something to draw.
 
-    Two signals only: the heading names a thing with states or steps, or its
-    body already draws arrows in plain text.
+    The heading names states or steps, or its body draws arrows in text.
     """
     return bool(words & DIAGRAM_VOCAB) or body_arrows >= MIN_ARROWS_FOR_FLOW
 
 
 def discover_sources(artifact_path, intro_text):
-    """Find the documents an artifact names in its opening text.
-
-    An explainer almost always cites the thing it explains up front, so this
-    keeps the check usable with no arguments at all. Only the intro is read,
-    because a file mentioned once in a finding is not the subject.
-    """
+    """Find the documents that the artifact names in its opening text, where an
+    explainer cites its subject."""
     artifact_real = os.path.realpath(artifact_path)
     roots = [os.path.dirname(artifact_real)]
     for _ in range(4):
@@ -417,8 +398,6 @@ def discover_sources(artifact_path, intro_text):
             break
     return found
 
-
-# ----------------------------------------------------------------- checks
 
 def _finding(severity, kind, message, **extra):
     value = {"severity": severity, "kind": kind, "message": message}
@@ -459,6 +438,17 @@ def _check_diagram_markup(artifact):
                 "error", "mermaid-cdn-script",
                 f"Remove the Mermaid loader {src}. The review server renders "
                 "Mermaid offline with its own pinned copy."))
+        elif "://" in src:
+            findings.append(_finding(
+                "warn", "external-script",
+                f"External script {src} breaks the offline guarantee."))
+    for src in artifact["dynamic_imports"]:
+        if "mermaid" in src.lower():
+            findings.append(_finding(
+                "warn", "mermaid-dynamic-import",
+                f"Keep the import of {src} and every Mermaid call inside an "
+                "if (location.protocol === \"file:\") branch. The review "
+                "server renders Mermaid with its own pinned copy."))
         elif "://" in src:
             findings.append(_finding(
                 "warn", "external-script",
@@ -514,11 +504,8 @@ def _check_diagram_quality(artifact):
 
 
 def _word_present(word, pool):
-    """True when a word appears in a pool, allowing a prefix to stand in.
-
-    Authors shorten. A diagram called "arch" is about the architecture, and a
-    section on "scheduling" is covered by text that says "scheduler".
-    """
+    """True when a word is in the pool, or one word is a prefix of the other,
+    as in "arch" and "architecture"."""
     if word in pool:
         return True
     if len(word) < PREFIX_MIN:
@@ -538,14 +525,9 @@ def _matches(section_words, artifact_words):
 
 
 def _diagram_covers(heading, diagrams):
-    """True when some diagram is plainly about this source heading.
+    """True when a diagram cites the section number or shares a subject word.
 
-    A caption that cites the section by number is the strongest signal, since
-    that is how authors tie a picture back to the document. Otherwise the
-    diagram has to share a word that names the subject. Words like "state" and
-    "flow" do not count: they say what kind of picture it is, not what it is
-    of, so "run state" and "endpoint state" need more than one diagram between
-    them.
+    Diagram-type words such as "state" do not count.
     """
     distinctive = heading["words"] - DIAGRAM_VOCAB
     for diagram in diagrams:
@@ -654,8 +636,6 @@ def run_checks(artifact_path, source_paths=(), ignore=(), discover=True):
         "ok": not counts.get("error", 0) and not counts.get("gap", 0),
     }
 
-
-# ----------------------------------------------------------------- output
 
 _ORDER = {"error": 0, "gap": 1, "warn": 2}
 

@@ -107,3 +107,8 @@ Then('the agent hears about the phone overflow', async ({ arev }) => {
     warning => warning.kind === 'h-overflow' && warning.viewportClass === 'mobile',
   )).toBe(true);
 });
+
+Then('the curtain stays up after the check timeout', async ({ page, rail }) => {
+  await page.waitForTimeout(4_500);
+  await expect(rail.curtain).toBeVisible();
+});

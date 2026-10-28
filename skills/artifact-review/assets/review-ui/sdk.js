@@ -1,11 +1,6 @@
 /*
- * arev SDK. Injected into the reviewed artifact when served through arev.
- * The artifact file on disk never contains this script.
- *
- * Talks only to the parent chrome via postMessage (same origin). The chrome
- * owns all HTTP calls; the SDK owns what happens inside the artifact page:
- * the open-time layout audit, element and text-range picking, native control
- * capture, and locating mermaid blocks for the whiteboard feature.
+ * The arev server injects this script into the reviewed artifact. The script
+ * sends every request to the parent chrome through postMessage.
  */
 (function () {
   "use strict";
@@ -14,7 +9,7 @@
 
   var annotating = false;
   var hoverEl = null;
-  var swallowClick = false; // the click that completes a text selection is not an element pick
+  var swallowClick = false; // The click that completes a text selection is not an element pick.
   var inlineBoards = Object.create(null);
   var sharedInlineFrame = null;
   var activeInlineBoardId = null;
@@ -26,7 +21,6 @@
     window.parent.postMessage(msg, window.location.origin);
   }
 
-  /* ---------------------------------------------------- selectors + anchors */
 
   function cssEscape(s) {
     return window.CSS && CSS.escape
@@ -110,9 +104,8 @@
     if (!el || !el.closest) return null;
     var svg = el.closest("svg");
     if (!svg) return null;
-    // The review tool draws its own SVG icons, and they sit inside the very
-    // containers a diagram is recognised by. Without this an icon would be
-    // enhanced as a diagram: node keys, pan and zoom, and a gesture tooltip.
+    // The review tool puts its own SVG icons inside diagram containers. This
+    // check keeps the tool from enhancing those icons as diagrams.
     if (svg.closest("[data-arev-internal]")) return null;
     var role = (svg.getAttribute("aria-roledescription") || "").toLowerCase();
     var id = (svg.id || "").toLowerCase();
@@ -200,17 +193,15 @@
     return prefix + selectorFor(group);
   }
 
-  /* A node's DOM id carries a per-render counter ("flowchart-API-3"), so a
-   * theme re-render would break any anchor built on it. The stable key drops
-   * the counter and is stamped onto every node as data-arev-node-key, giving
-   * annotations an identity and a selector that survive re-renders. */
+  /* A re-render changes the counter in a node DOM id. The stable key drops
+   * that counter, so annotations survive re-renders. */
 
   function stableNodeKey(group, svg, index) {
     var key = group.getAttribute("data-id") || "";
     if (!key) {
       var raw = group.id || "";
       // Mermaid 11 prefixes node ids with the svg's render id, which changes
-      // on every render pass. Drop it before dropping the counter.
+      // on every render pass. Drop that prefix first.
       if (svg && svg.id && raw.indexOf(svg.id + "-") === 0)
         raw = raw.slice(svg.id.length + 1);
       var counted = raw.match(/^(.*[^-])-\d+$/);
@@ -260,8 +251,8 @@
     };
   }
 
-  /* Text-range anchor: the selected text plus surrounding context, so the
-   * agent can find the exact spot even after the element re-renders. */
+  /* The surrounding context lets the agent find the selected text again
+   * after the element re-renders. */
   function textAnchor(sel) {
     var range = sel.getRangeAt(0);
     var exact = sel.toString();
@@ -278,40 +269,33 @@
     };
   }
 
-  /* ------------------------------------------------------- annotation mode */
 
   var css = document.createElement("style");
   css.textContent =
     ".arev-hover{outline:2px solid #5b8def!important;outline-offset:2px;cursor:crosshair!important}" +
     ".arev-flash{outline:3px solid #e8a13c!important;outline-offset:2px;transition:outline .2s}" +
-    // max-width defends the board against artifact CSS that caps a column, so it always
-    // spans the same width as the diagram it stands in for. At rest the host is
-    // only the row its button stands in, so it draws no box of its own and never
-    // covers the picture it sits above. It lives inside the diagram block, so the
-    // row shares that block's background and border rather than painting a band
-    // of its own on the surface behind it.
+    // The max-width:none rule overrides any artifact CSS that caps column
+    // width, so the board always matches the diagram width.
     ".arev-inline-board{position:relative;width:100%;max-width:none;margin:0;padding:0 0 8px;display:flex;align-items:center;justify-content:flex-end;background:transparent;border:0;border-radius:8px;box-sizing:border-box}" +
     ".arev-inline-board.arev-inline-active{display:block;padding:0;max-height:calc(100vh - 24px);margin:0;background:#fff;border:1px solid rgba(128,128,128,.4);overflow:hidden}" +
     ".arev-inline-board>iframe{position:absolute;inset:0;display:block;width:100%;height:100%;border:0;background:#fff}" +
-    // A square icon button at rest: outlined so it reads as a control before
-    // anyone points at it, then a thicker outline in a different colour on
-    // hover so the change never rests on colour alone.
+    // On hover, the outline grows thicker and changes color, so the change
+    // does not rely on color alone.
     ".arev-inline-unlock{box-sizing:border-box;width:32px;height:32px;flex:none;display:inline-flex;align-items:center;justify-content:center;padding:0;border:1.5px solid #4d7ce0;border-radius:6px;background:rgba(77,124,224,.12);color:#4d7ce0;cursor:pointer;transition:border-color 120ms ease-out,border-width 120ms ease-out,background-color 120ms ease-out,color 120ms ease-out}" +
     ".arev-inline-unlock:hover:not(:disabled){border-width:2.5px;border-color:#1f9d6b;background:rgba(31,157,107,.18);color:#1f9d6b}" +
     ".arev-inline-unlock:focus-visible{outline:2px solid #1f9d6b;outline-offset:2px}" +
     ".arev-inline-unlock svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}" +
     ".arev-inline-unlock span{display:none}" +
     ".arev-inline-unlock:disabled{cursor:wait;opacity:.6}" +
-    // A display of any kind outranks the hidden attribute, and an unlocked
-    // editor hides this overlay rather than removing it. Without this the
-    // invisible button keeps swallowing every click meant for the canvas.
+    // Any display value overrides the hidden attribute. Without this rule, the
+    // hidden overlay keeps catching clicks meant for the canvas.
     ".arev-inline-unlock[hidden]{display:none}" +
-    // Once the editor is mounted the same button becomes the overlay that
-    // covers the frame until the reviewer unlocks it.
+    // After the editor mounts, the same button becomes the overlay that
+    // covers the frame until the reviewer unlocks the editor.
     ".arev-inline-active .arev-inline-unlock{position:absolute;inset:0;width:100%;height:100%;z-index:2;border:0;border-radius:0;background:rgba(128,128,128,.08);color:inherit;font:600 13px/1.3 sans-serif;transition:none}" +
     ".arev-inline-active .arev-inline-unlock svg{display:none}" +
     ".arev-inline-active .arev-inline-unlock span{display:inline-block;padding:8px 13px;border:1px solid rgba(128,128,128,.5);border-radius:999px;background:rgba(128,128,128,.14)}" +
-    // A dark artifact needs a lighter pair to stay legible against its own page.
+    // Dark pages need lighter button colors to stay legible.
     "@media (prefers-color-scheme:dark){" +
     ".arev-inline-unlock{border-color:#87a3f4;background:rgba(135,163,244,.12);color:#87a3f4}" +
     ".arev-inline-unlock:hover:not(:disabled){border-color:#5dd3a0;background:rgba(93,211,160,.18);color:#5dd3a0}" +
@@ -319,8 +303,8 @@
     // A finger has no hover, so the square grows to the 44px touch minimum.
     "@media (pointer:coarse){.arev-inline-board:not(.arev-inline-active) .arev-inline-unlock{width:44px;height:44px}}" +
     ".arev-inline-board.arev-inline-fullscreen{position:fixed!important;inset:12px!important;width:auto!important;height:auto!important;max-height:none!important;z-index:2147483645!important;border-radius:10px!important;box-shadow:0 12px 48px rgba(0,0,0,.35)}" +
-    /* Edit text mode. The artifact owns the page, so anything the reviewer has
-       to see through the artifact's own stylesheet is forced. */
+    /* The artifact stylesheet owns the page, so edit-mode styles that must
+       stay visible use !important. */
     ".arev-editing{--arev-surface:#fff;--arev-ink:#171a20;--arev-muted:#61687a;--arev-line:#dcdde3;--arev-accent:#3557c0;--arev-accent-soft:#e8edfb;--arev-ok:#186a4b;--arev-ok-soft:#e7f4ee;--arev-cut:#a63d40;--arev-cut-soft:#f8e9ea;--arev-shadow:0 4px 8px rgba(20,24,32,.14)}" +
     "@media (prefers-color-scheme:dark){.arev-editing{--arev-surface:#181c23;--arev-ink:#e8ebf1;--arev-muted:#a0a7b6;--arev-line:#303744;--arev-accent:#87a3f4;--arev-accent-soft:#242d45;--arev-ok:#5dd3a0;--arev-ok-soft:#17362a;--arev-cut:#e38d91;--arev-cut-soft:#3d2629;--arev-shadow:0 4px 8px rgba(0,0,0,.38)}}" +
     ".arev-editing body{cursor:text}" +
@@ -328,8 +312,8 @@
     ".arev-mark{border-radius:3px;padding:0 1px}" +
     ".arev-mark-del{background:var(--arev-cut-soft)!important;color:var(--arev-cut)!important;text-decoration:line-through!important}" +
     ".arev-mark-edited{background:var(--arev-ok-soft)!important;color:var(--arev-ok)!important;text-decoration:underline!important;text-underline-offset:3px;text-decoration-thickness:2px}" +
-    // A rewritten block carries a tag instead of an underline. Underlining
-    // several whole paragraphs says the same thing far too loudly.
+    // A rewritten block shows an "Edited" tag instead of an underline. An
+    // underline on whole paragraphs is too distracting.
     ".arev-mark-edited.arev-mark-block{position:relative;display:block;padding:6px 10px;margin:0 -10px;border-radius:5px;text-decoration:none!important}" +
     '.arev-mark-edited.arev-mark-block::after{content:"Edited";position:absolute;top:-9px;right:0;border-radius:999px;padding:1px 7px;background:var(--arev-ok);color:var(--arev-surface);font:650 10px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-decoration:none}' +
     ".arev-mark-edited.arev-mark-block>:first-child{margin-top:0}" +
@@ -338,8 +322,8 @@
     "[data-arev-cut]{position:relative;background:var(--arev-cut-soft)!important;border-radius:5px;color:var(--arev-cut)!important;text-decoration:line-through!important}" +
     '[data-arev-cut]::after{content:"Marked for deletion";position:absolute;top:-9px;right:0;border-radius:999px;padding:1px 7px;background:var(--arev-cut);color:#fff;font:650 10px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-decoration:none}' +
     ".arev-gutter-group{position:absolute;z-index:2147483643;display:flex;gap:4px;margin:0;padding:0}" +
-    // A display of any kind outranks the hidden attribute, so both floating
-    // groups have to say it again for themselves.
+    // Any display value overrides the hidden attribute, so the floating groups
+    // restate display:none for [hidden].
     ".arev-gutter-group[hidden],.arev-bar[hidden]{display:none}" +
     ".arev-gutter{box-sizing:border-box;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--arev-line);border-radius:7px;padding:0;background:var(--arev-surface);color:var(--arev-muted);cursor:pointer;box-shadow:var(--arev-shadow)}" +
     ".arev-gutter:hover:not(:disabled){border-color:var(--arev-accent);background:var(--arev-accent-soft);color:var(--arev-accent)}" +
@@ -353,8 +337,8 @@
     ".arev-btn:hover{border-color:var(--arev-accent);background:var(--arev-accent-soft)}" +
     ".arev-btn-primary,.arev-btn-primary:hover{border-color:var(--arev-accent);background:var(--arev-accent);color:#fff}" +
     ".arev-btn:focus-visible,.arev-gutter:focus-visible{outline:2px solid var(--arev-accent);outline-offset:2px}" +
-    // The selected text itself becomes the editor, so the original words are
-    // already there and the reviewer types over them where they stand.
+    // The selected text becomes the editor, so the reviewer types over the
+    // original words in place.
     ".arev-live-edit{border-radius:4px;padding:0 2px;background:var(--arev-accent-soft)!important;box-shadow:inset 0 0 0 2px var(--arev-accent);caret-color:var(--arev-accent)}" +
     ".arev-live-edit:focus{outline:none}" +
     ".arev-live-block{display:block;padding:6px 10px;margin:0 -10px}" +
@@ -406,7 +390,7 @@
           rect: { top: rect.top, left: rect.left, bottom: rect.bottom },
         });
         sel.removeAllRanges();
-        swallowClick = true; // the click event for this mouseup is still coming
+        swallowClick = true; // The click event for this mouseup has not fired yet.
       }
     },
     true,
@@ -423,7 +407,7 @@
       if (swallowClick) {
         swallowClick = false;
         return;
-      } // text pick already sent
+      }
       var target = mermaidNodeTarget(e.target);
       var el = target ? mermaidNodeGroup(e.target) : e.target;
       el.classList.remove("arev-hover");
@@ -451,11 +435,8 @@
     true,
   );
 
-  /* --------------------------------------------------------- edit text mode
-   * Annotation says where a change belongs. Edit text mode says what the words
-   * become: the reviewer rewrites a line or a picked range where it stands, or
-   * marks it for deletion. Nothing here writes to the file. The chrome queues
-   * each change as a draft and the reviewer chooses save or send. */
+  /* Edit text mode never writes to the file. The chrome keeps each change as
+   * a draft for save or send. */
 
   var BLOCK_SELECTOR =
     "p,li,h1,h2,h3,h4,h5,h6,blockquote,dd,dt,figcaption,td,th,caption,summary";
@@ -491,10 +472,8 @@
     return own ? [own] : [];
   }
 
-  /* The text this block would carry once every draft on it is applied. Cut
-   * words are already wrapped, so dropping those wrappers reads the result
-   * without touching what the reviewer sees. Each one leaves a marker, so a cut
-   * closes the gap instead of leaving the two spaces that surrounded it. */
+  /* Each cut leaves a CUT_SEAM marker, so the result closes the gap instead
+   * of keeping the two spaces around the cut. */
   var CUT_SEAM = "\u0000";
 
   function resolvedText(block) {
@@ -533,8 +512,8 @@
     return text.length > 60 ? text.slice(0, 60) + "…" : text;
   }
 
-  /* Drawn rather than a glyph, so an icon keeps one stroke weight at any size
-   * and needs no font the artifact might not ship. */
+  /* A drawn SVG icon keeps one stroke weight at any size and needs no font
+   * that the artifact might not ship. */
   function drawnIcon(paths) {
     var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", "0 0 24 24");
@@ -676,7 +655,6 @@
     }
   }
 
-  /* --------------------------------------------------------- drafting edits */
 
   function recordEdit(record) {
     textEdits[record.id] = record;
@@ -794,7 +772,6 @@
     if (selection) selection.removeAllRanges();
   }
 
-  /* ------------------------------------------------------- the live editor */
 
   function fragmentOf(host) {
     var fragment = document.createDocumentFragment();
@@ -804,8 +781,8 @@
     return fragment;
   }
 
-  /* A selection crossing two blocks grows to whole blocks, so the reviewer gets
-   * every line of the range instead of two half sentences. */
+  /* A selection across two blocks grows to whole blocks, so the reviewer
+   * edits complete lines, not two half sentences. */
   function wholeBlocksIfMultiple(range) {
     var first = editBlockFor(range.startContainer);
     var last = editBlockFor(range.endContainer);
@@ -832,8 +809,8 @@
       block: spansBlocks,
       label: editLabel(block),
       scope: spansBlocks ? "lines" : "range",
-      // Words picked inside one line still belong to that line. Only a range
-      // that grew to whole blocks carries the blocks inside the editor itself.
+      // Words picked inside one line belong to that line. Only a multi-block
+      // range uses the blocks inside the editor.
       blocks: spansBlocks ? editBlocksIn(host) : [block],
       afterBlocks: spansBlocks
         ? function () {
@@ -848,8 +825,8 @@
     });
   }
 
-  /* A whole line opens as itself, so the paragraph keeps its own tag and its
-   * own look while it is edited. */
+  /* The block itself becomes the editor, so the paragraph keeps its own tag
+   * and style during the edit. */
   function openBlockEditor(block) {
     if (!block || block.hasAttribute("data-arev-cut")) return;
     var done = block.getAttribute("data-arev-edit");
@@ -876,8 +853,8 @@
 
   function startEditing(plan) {
     buildEditUi();
-    // Nothing else floats over the artifact while an editor is open. The line
-    // handles would act on a line the reviewer is no longer only pointing at.
+    // This code hides the other floating controls while an editor is open,
+    // because the line handles would act on the wrong line.
     editUi.group.hidden = true;
     editUi.selBar.hidden = true;
     editUi.undoBar.hidden = true;
@@ -889,9 +866,8 @@
     liveEdit = plan;
     placeBar(editUi.editBar, plan.host.getBoundingClientRect(), true);
     plan.host.focus();
-    // The caret lands after the text, never over it. Opening on a full
-    // selection would let the first keystroke wipe the words the reviewer came
-    // to keep.
+    // The caret goes after the text. A full selection would let the first
+    // keystroke delete the words the reviewer wants to keep.
     var caret = document.createRange();
     caret.selectNodeContents(plan.host);
     caret.collapse(false);
@@ -951,7 +927,6 @@
     plan.restore();
   }
 
-  /* ------------------------------------------------------- edit mode events */
 
   document.addEventListener(
     "mouseover",
@@ -965,9 +940,8 @@
       var ui = buildEditUi();
       var rect = block.getBoundingClientRect();
       ui.group.hidden = false;
-      // Beside the line where the page leaves a margin for them. An artifact
-      // whose text runs to the left edge gets them above the line instead,
-      // because handles that cover the first words are worse than none.
+      // Without a left margin, the handles go above the line, because handles
+      // that cover the first words are worse than no handles.
       var beside = rect.left + window.scrollX - ui.group.offsetWidth - 8;
       var above = beside < 4;
       ui.group.style.top =
@@ -1027,8 +1001,8 @@
     true,
   );
 
-  /* Clicking the line the pointer is already highlighting opens the same
-   * editor, so the pencil is a shortcut rather than the only way in. */
+  /* A click on the highlighted line opens the same editor as the pencil
+   * button. */
   document.addEventListener(
     "click",
     function (event) {
@@ -1076,9 +1050,8 @@
       placeBar(editUi.editBar, liveEdit.host.getBoundingClientRect(), true);
   });
 
-  /* --------------------------------------------------- native control capture
-   * Interacting with the artifact's own controls IS feedback: a ticked
-   * checkbox or a chosen radio answers a question without any typing. */
+  /* A change to an artifact control is feedback. A ticked checkbox or a
+   * chosen radio button answers a question without any typing. */
 
   function controlItem(el, value) {
     var kind = el.matches("[data-arev-action],[data-lavish-action]")
@@ -1104,7 +1077,7 @@
     function (e) {
       if (annotating || editing) return;
       var el = e.target;
-      if (el.closest("[data-arev-internal]")) return; // arev's own UI is not feedback
+      if (el.closest("[data-arev-internal]")) return; // The arev UI is not feedback.
       if (!el.matches("input,select,textarea")) return;
       var value =
         el.type === "checkbox"
@@ -1112,7 +1085,8 @@
           : el.type === "radio"
             ? el.value
             : el.value;
-      // A radio group is one answer: key it by group name, not by the element.
+      // A radio group gives one answer, so the selector names the group, not
+      // the element.
       var item = controlItem(el, value);
       if (el.type === "radio" && el.name)
         item.selector = "input[name=" + cssEscape(el.name) + "]";
@@ -1125,7 +1099,7 @@
     "click",
     function (e) {
       if (annotating || editing) return;
-      if (e.target.closest("[data-arev-internal]")) return; // arev's own UI is not feedback
+      if (e.target.closest("[data-arev-internal]")) return; // The arev UI is not feedback.
       var el = e.target.closest(
         "button,[data-arev-action],[data-lavish-action]",
       );
@@ -1137,7 +1111,6 @@
     true,
   );
 
-  /* ------------------------------------------------ inline diagram editors */
 
   function boardForSource(source) {
     var board = inlineBoards[activeInlineBoardId];
@@ -1213,11 +1186,8 @@
     board.block.style.display = board.originalDisplay;
   }
 
-  /* The resting row belongs inside the diagram block, so it shares that block's
-   * background and border instead of drawing a band of its own on the surface
-   * behind it. Mermaid rewrites the block on every theme change, and activation
-   * hides the block the editor stands in for, so the row is placed again
-   * whenever it is dropped. */
+  /* The resting row sits inside the diagram block, so the row shares the
+   * block background and border. */
   function placeBoardHost(board) {
     if (!board || !board.block) return;
     if (board.block.firstChild === board.host) return;
@@ -1287,8 +1257,8 @@
     board.overlay.hidden = false;
     setOverlayIdle(board);
     placeBoardHost(board);
-    // The single editor frame outlives every board, so a host that just went
-    // back to rest must not keep it. Activation re-parents and reloads it.
+    // The shared frame outlives every board, so a board at rest must not keep
+    // the frame. Activation moves and reloads the frame.
     if (sharedInlineFrame && sharedInlineFrame.parentNode === board.host)
       sharedInlineFrame.remove();
   }
@@ -1299,8 +1269,8 @@
     if (activeInlineBoardId === board.id) activeInlineBoardId = null;
   }
 
-  /* The one place the resting control names itself. The label text stays for
-   * the mounted overlay, which shows words rather than the icon. */
+  /* The label text stays for the mounted overlay, which shows words instead
+   * of the icon. */
   function setOverlayIdle(board) {
     board.overlayLabel.textContent = "Edit diagram";
     board.overlay.setAttribute("aria-label", "Edit diagram");
@@ -1315,12 +1285,8 @@
       return;
     }
 
-    // Read before the style writes below, so the rect costs no extra reflow.
-    // Measured on activation, not at mount: the block keeps growing while
-    // Mermaid renders and fonts settle. The 216px covers the frame's header,
-    // feedback bar, and fallback banner, about 145px owned by
-    // tooling/whiteboard-frame.css and unreadable from here, plus room for
-    // Excalidraw's toolbar, which floats over the canvas.
+    // The block grows while Mermaid renders, so the code measures at
+    // activation. The 216px holds the frame chrome and Excalidraw toolbar.
     var editorHeight = Math.max(
       300,
       Math.round(board.block.getBoundingClientRect().height) + 216,
@@ -1329,8 +1295,8 @@
     var previous = inlineBoards[activeInlineBoardId];
     if (previous) deactivateInlineBoard(previous);
 
-    // The height above was measured with the row still inside the block. The
-    // editor now takes the block's place, and a hidden block cannot hold it.
+    // The board host takes the place of the block, and a hidden block cannot
+    // hold the host.
     liftBoardHost(board);
 
     var iframe = createSharedInlineFrame();
@@ -1458,8 +1424,8 @@
     }
   }
 
-  // A theme flip makes the offline renderer redraw the block, which throws away
-  // everything inside it. Put every resting row back where it belongs.
+  // A theme change makes the offline renderer redraw the block and delete its
+  // contents. This listener puts each resting row back.
   document.addEventListener("arev:mermaid-rendered", function () {
     Object.keys(inlineBoards).forEach(function (id) {
       if (id !== activeInlineBoardId) placeBoardHost(inlineBoards[id]);
@@ -1508,8 +1474,8 @@
   document.addEventListener(
     "keydown",
     function (event) {
-      // Escape reaching the artifact means focus sits outside the editor frame,
-      // which handles its own Escape. Both use one order: fullscreen, then close.
+      // Escape reaches the artifact only when focus is outside the editor
+      // frame. Both handlers exit fullscreen first and then close the editor.
       if (event.key !== "Escape") return;
       if (fullscreenBoardId)
         setBoardFullscreen(inlineBoards[fullscreenBoardId], false);
@@ -1519,7 +1485,6 @@
     true,
   );
 
-  /* ------------------------------------------------------------- utilities */
 
   window.addEventListener("message", function (e) {
     if (e.source !== window.parent || !e.data || !e.data.arev) return;
@@ -1584,10 +1549,8 @@
     }
   });
 
-  /* ---------------------------------------------------- diagram cards
-   * A rendered diagram stays a clean inline card. The Expand button opens the
-   * chrome's modal Excalidraw editor, the same shape as the explain-changes
-   * report's diagram dialog. Nothing heavy ever mounts inside the artifact. */
+  /* The Expand button opens the modal Excalidraw editor in the chrome, so
+   * nothing heavy mounts inside the artifact. */
 
   function showBoardSvg(host, id, svg) {
     host.innerHTML = svg;
@@ -1608,11 +1571,8 @@
     host.appendChild(btn);
   }
 
-  /* ------------------------------------------------ edge label separation
-   * Mermaid drops every edge label on its edge's midpoint and never checks
-   * whether two of them land in the same place. Each label paints an opaque
-   * chip, so a crowded graph buries whole words under the label on top.
-   * Push overlapping chips apart before anything else reads the SVG. */
+  /* Mermaid can put two opaque edge labels on one point, so one label hides
+   * the other. spreadEdgeLabels pushes the labels apart. */
 
   function safeBBox(el) {
     try {
@@ -1633,14 +1593,14 @@
     var m = consolidated
       ? consolidated.matrix
       : { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
-    // Only a pure translation can be rewritten as a new translation.
+    // The code can rewrite only a pure translation as a new translation.
     if (m.a !== 1 || m.b !== 0 || m.c !== 0 || m.d !== 1) return null;
     var box = safeBBox(el);
     if (!box || box.width < 1 || box.height < 1) return null;
     return {
       el: el,
       // getBBox measures before the element's own translation, so the
-      // translation to write back is the moved corner minus this origin.
+      // translation to write back is the moved corner minus ox and oy.
       ox: box.x,
       oy: box.y,
       x: box.x + m.e,
@@ -1650,16 +1610,16 @@
     };
   }
 
-  // Mermaid frames a drawing with an 8 unit margin. Keeping every push inside
-  // that frame leaves the diagram exactly the size the reviewer already sees.
+  // Mermaid frames a drawing with an 8 unit margin. Each push stays inside
+  // that frame, so the diagram keeps its visible size.
   function inFrame(value, size, low, span) {
     if (size >= span) return value;
     return Math.min(Math.max(value, low), low + span - size);
   }
 
   function spreadEdgeLabels(svg) {
-    // Counting labels is free. Measuring them forces a layout, so a diagram
-    // that cannot have a collision never pays for one.
+    // Measuring labels forces a layout, so the code counts them first and
+    // skips a diagram with fewer than two.
     var nodes = svg.querySelectorAll("g.edgeLabel");
     if (nodes.length < 2) return;
     var labels = [];
@@ -1671,9 +1631,8 @@
 
     var frame = svg.viewBox.baseVal;
     var moved = false;
-    // One pass settles one overlapping pair, so a crowded diagram needs more
-    // rounds than it has labels. Squaring the count is only a runaway guard.
-    // The loop stops itself as soon as a pass changes nothing.
+    // One pass can settle only one overlapping pair, so the pass limit is the
+    // label count squared.
     var limit = labels.length * labels.length;
     for (var pass = 0; pass < limit; pass++) {
       var shifted = false;
@@ -1684,8 +1643,8 @@
           var ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
           var oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
           if (ox <= 0 || oy <= 0) continue;
-          // Escape along the axis that needs the shorter move, so a label
-          // stays as close to its own edge as separation allows.
+          // The labels move along the axis with the shorter move, so each
+          // label stays close to its own edge.
           var na, nb;
           if (oy <= ox) {
             var dy = oy / 2 + 1;
@@ -1719,9 +1678,8 @@
     });
   }
 
-  // A diagram hidden when the page boots has no box to measure, and nothing
-  // visits it a second time. Watch it instead, and separate the labels the
-  // moment the browser lays it out.
+  // A diagram hidden at boot has no box to measure, so a ResizeObserver waits
+  // until the browser lays out the diagram.
   function spreadWhenLaidOut(svg) {
     if (laidOut(svg) || !window.ResizeObserver) return spreadEdgeLabels(svg);
     var observer = new ResizeObserver(function () {
@@ -1733,10 +1691,8 @@
     observer.observe(svg);
   }
 
-  /* ------------------------------------------------- diagram explore mode
-   * Dependency-free viewBox pan/zoom on every rendered Mermaid SVG. Frozen
-   * while annotate mode is on so element picks stay precise. Only the
-   * rendered SVG changes. The artifact file is never modified. */
+  /* Annotate mode freezes diagram pan and zoom, so element picks stay
+   * precise. */
 
   var exploreViewports = [];
 
@@ -1764,16 +1720,16 @@
     var view = { x: initial.x, y: initial.y, w: initial.w, h: initial.h };
     var panning = null;
 
-    // Explore mode has no chrome of its own, so a native SVG tooltip carries
-    // the hint. A diagram that already titles itself keeps its own title.
+    // Explore mode has no controls, so a native SVG tooltip shows the gesture
+    // hint. An existing diagram title stays.
     var hint = null;
     if (!svg.querySelector(":scope > title")) {
       hint = document.createElementNS("http://www.w3.org/2000/svg", "title");
       hint.textContent =
         "Hold Ctrl or Cmd and scroll to zoom, drag to pan, " +
         "double-click to restore the original size.";
-      // A screen reader reads a <title> child as the diagram's name. Name the
-      // diagram first so the gesture hint lands on the description instead.
+      // A screen reader reads a <title> child as the diagram name. The
+      // aria-label names the diagram, so the hint becomes the description.
       if (!svg.matches("[aria-label],[aria-labelledby]"))
         svg.setAttribute("aria-label", "Diagram " + diagramIdFor(svg));
     }
@@ -1807,15 +1763,15 @@
       apply();
     }
 
-    // A plain wheel belongs to the page. Taking it would stop a reader mid
-    // scroll and resize a diagram nobody asked to resize.
+    // Only Ctrl or Cmd with the wheel zooms, so a plain wheel still scrolls
+    // the page.
     svg.addEventListener(
       "wheel",
       function (event) {
         if (annotating || !(event.ctrlKey || event.metaKey)) return;
         event.preventDefault();
-        // One mouse notch is deltaY 120. A trackpad sends one gesture as a
-        // burst of small deltas, so the step follows the delta, not its sign.
+        // One mouse notch is deltaY 120. A trackpad sends many small deltas,
+        // so the step follows the delta size, not its sign.
         var steps = Math.max(
           -1,
           Math.min(1, event.deltaMode ? event.deltaY : event.deltaY / 120),
@@ -1830,7 +1786,7 @@
     });
     svg.addEventListener("pointerdown", function (event) {
       if (annotating || event.button !== 0) return;
-      // A viewBox write never resizes the client box. One size read per
+      // A viewBox write never resizes the client box, so one size read per
       // drag avoids a layout pass on every pointer move.
       var rect = svg.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
@@ -1870,9 +1826,8 @@
       setFrozen: function (frozen) {
         panning = null;
         svg.style.cursor = frozen ? "" : "grab";
-        // A vertical finger drag scrolls the page, the same way a plain wheel
-        // does. Horizontal drags still pan, which is the axis a wide diagram
-        // needs. A browser-owned scroll fires pointercancel, so endPan runs.
+        // Vertical touch drags scroll the page, and horizontal drags pan the
+        // diagram. A browser scroll fires pointercancel, so endPan still runs.
         svg.style.touchAction = frozen ? "" : "pan-y";
         if (!hint) return;
         if (frozen) hint.remove();
@@ -1905,7 +1860,6 @@
 
   document.addEventListener("arev:mermaid-rendered", enhanceMermaidSvgs);
 
-  /* -------------------------------------------------- mermaid + audit + boot */
 
   function captureMermaidSources() {
     var holders = [];
@@ -1935,9 +1889,8 @@
     });
   }
 
-  // The review rail lists diagrams by name: the caption the artifact declares,
-  // else the id its author wrote, else the reading position. Reading the
-  // author's id keeps a generated hash suffix out of the name.
+  // The review rail shows this title. The authored id keeps a generated hash
+  // suffix out of the name.
   function diagramTitle(holder, authoredId, index) {
     var figure = holder.closest("figure");
     var caption = figure ? figure.querySelector(":scope > figcaption") : null;
@@ -1989,9 +1942,8 @@
     return blocks;
   }
 
-  // The review tool draws its own SVG icons, and the resting edit control puts
-  // one inside the very block a diagram is recognised by. Only an SVG outside
-  // that chrome counts as a drawn diagram.
+  // The resting edit control puts an arev SVG icon inside the diagram block,
+  // so only an SVG outside the arev UI counts.
   function drawnSvg(holder) {
     var found = null;
     Array.prototype.forEach.call(holder.querySelectorAll("svg"), function (svg) {
@@ -2010,16 +1962,15 @@
       );
     });
     if (!pending) return null;
-    // The review server bundles the same pinned Mermaid the whiteboard uses,
-    // so diagrams render with no CDN and no network at all.
+    // The review server bundles the same pinned Mermaid as the whiteboard, so
+    // diagrams render without a CDN or network access.
     return import(window.location.origin + "/mermaid.js").catch(function (err) {
       console.warn("arev: local Mermaid renderer failed to load", err);
     });
   }
 
-  // A block that never became an SVG is a diagram the reviewer cannot see.
-  // The page audit runs before rendering, so this is the only pass that can
-  // catch a Mermaid syntax error or a renderer that failed to load.
+  // A block without an SVG means a Mermaid syntax error or a failed renderer,
+  // so the reviewer cannot see the diagram.
   function unrenderedMermaidFindings(blocks) {
     var findings = [];
     blocks.forEach(function (block) {
@@ -2048,39 +1999,33 @@
     try {
       return window.__arevAudit(document, window) || [];
     } catch (err) {
-      /* a crashed audit must never block review */
+      /* A crashed audit must never block the review. */
       return [];
     }
   }
 
   function boot() {
-    var findings = safeAudit();
-    send({ type: "audit-done", findings: findings });
     var mermaidBlocks = findMermaid();
     var rendering = renderMermaidLocally(mermaidBlocks);
-    send({
-      type: "sdk-ready",
-      mermaid: mermaidBlocks,
-      title: document.title || "",
-    });
-    if (!rendering) {
-      // Diagrams the artifact rendered itself still get identity keys and
-      // explore mode. The offline renderer's own event covers the other path.
+    // The audit waits for the drawn diagrams, because unrendered Mermaid
+    // source can be wider than the diagram the reviewer will see.
+    (rendering || Promise.resolve()).then(function () {
       enhanceMermaidSvgs();
-      return;
-    }
-    rendering.then(function () {
-      enhanceMermaidSvgs();
-      var failed = unrenderedMermaidFindings(mermaidBlocks);
-      if (!failed.length) return;
-      // A later report replaces the earlier one, so resend the whole set.
-      send({ type: "audit-done", findings: findings.concat(failed) });
+      var findings = safeAudit();
+      if (rendering) {
+        findings = findings.concat(unrenderedMermaidFindings(mermaidBlocks));
+      }
+      send({ type: "audit-done", findings: findings });
+      send({
+        type: "sdk-ready",
+        mermaid: mermaidBlocks,
+        title: document.title || "",
+      });
     });
   }
 
-  // Mermaid's start-on-load mode can replace source text with SVG before the
-  // review controller boots. Preserve the authored source while the document
-  // is still parsing so the inline editor always receives Mermaid syntax.
+  // Mermaid start-on-load can replace the source with SVG before boot, so this
+  // call saves the authored source while the document parses.
   captureMermaidSources();
 
   if (document.readyState === "complete") setTimeout(boot, 50);

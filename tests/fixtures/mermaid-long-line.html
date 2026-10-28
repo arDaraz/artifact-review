@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>mermaid long line fixture</title>
+<style>
+  body { font-family: sans-serif; margin: 0; padding: 16px; }
+</style>
+</head>
+<body>
+  <h1>Diagram with a long source line</h1>
+  <p>The source line is far wider than the page, but the drawn diagram fits.</p>
+  <pre class="mermaid" id="long-line">flowchart TD
+  start["Start"] --> load["Load the record"] --> check["Check the fields"] --> save["Save the record"] --> notify["Notify the owner"] --> done["Done"]
+</pre>
+</body>
+</html>
