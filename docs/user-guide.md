@@ -111,6 +111,25 @@ batch becomes Answered.
 See [Architecture](architecture.md#delivery-and-latency) when measuring these
 phases.
 
+## Resume the agent
+
+Sent feedback waits on the server until an agent polls, even after the agent
+session that opened the review has closed. When no agent polls, select
+**Resume** in the top bar. The review then opens a new terminal window. That
+window resumes the agent session that opened the review and tells it to poll
+the review.
+
+- **Resume** is dimmed while an agent polls or works, and for 60 seconds after
+  a resume starts.
+- **Resume** is available only when a Claude Code session opened the review.
+  Claude Code gives its session ID to `arev open`. Other agents do not, so the
+  button stays dimmed for them.
+- When the agent session is still open in another terminal, the review refuses
+  to resume it. Go to that terminal and ask the agent to poll.
+- The window opens on macOS only. On other platforms, the review copies the
+  resume command to the clipboard. Paste it into a terminal on the machine
+  that runs the review.
+
 ## Reports, archives, and cleanup
 
 Artifact Review stores session history locally. Use the CLI to turn that

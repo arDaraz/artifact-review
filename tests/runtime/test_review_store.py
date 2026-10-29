@@ -57,6 +57,9 @@ def sample_state():
             }
         ],
         "agent": {"status": "idle", "last_seen": 5.0},
+        "owner": {"agent": "claude-code",
+                  "session_id": "37959434-8e03-4050-b5a3-b40f776fd998",
+                  "cwd": "/tmp", "pid": None},
     }
 
 

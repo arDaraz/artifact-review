@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 DATABASE_NAME = "review.sqlite3"
 LEGACY_NAME = "session.json"
-SCALAR_KEYS = ("ended", "ended_by", "audit", "agent")
+SCALAR_KEYS = ("ended", "ended_by", "audit", "agent", "owner")
 
 
 def _json(value):
@@ -117,6 +117,7 @@ class ReviewStore:
             "feed": [],
             "events": [],
             "agent": {"status": "offline", "last_seen": None},
+            "owner": None,
         }
 
     def _connect(self):
@@ -276,6 +277,8 @@ class ReviewStore:
             raise TypeError("review state audit must be an object")
         if not isinstance(result["agent"], dict):
             raise TypeError("review state agent must be an object")
+        if result["owner"] is not None and not isinstance(result["owner"], dict):
+            raise TypeError("review state owner must be an object or null")
         return result
 
     def _load_unlocked(self):

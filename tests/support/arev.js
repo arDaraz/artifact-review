@@ -15,6 +15,9 @@ export class Arev {
   constructor({ home, artifact }) {
     this.artifact = artifact;
     this.env = { ...process.env, ARTIFACT_REVIEW_HOME:home };
+    // A suite started from a Claude Code shell must not record that session.
+    delete this.env.CLAUDE_CODE_SESSION_ID;
+    delete this.env.CLAUDE_PID;
     this.polls = new Set();
     this.sessionUrl = null;
     this.lastEvent = null;

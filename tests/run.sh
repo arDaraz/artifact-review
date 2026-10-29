@@ -69,6 +69,15 @@ else
   tail -20 "$EDITS_RAW"
 fi
 
+echo "== agent-resume"
+RESUME_RAW="$WORK/agent-resume.log"
+if python3 "$ROOT/tests/runtime/test_agent_resume.py" > "$RESUME_RAW" 2>&1; then
+  echo "PASS agent session resume from the review" | tee -a "$OUT"
+else
+  echo "FAIL agent resume - see $RESUME_RAW" | tee -a "$OUT"
+  tail -20 "$RESUME_RAW"
+fi
+
 echo "== whiteboard-chrome"
 CHROME_RAW="$WORK/whiteboard-chrome.log"
 if python3 "$ROOT/tests/runtime/test_whiteboard_chrome.py" > "$CHROME_RAW" 2>&1; then
