@@ -68,6 +68,10 @@ The default `poll --timeout 110` belongs under a tool timeout longer than 110
 seconds. For example, use `--timeout 570` only under a 600-second tool timeout.
 A killed poll wastes its wait but does not erase a queued event.
 
+In Claude Code, `open` records the calling session, so the reviewer's
+**Resume** button can reopen it after the session closes. A resumed session
+receives a prompt that names the artifact. Run `open` and `poll` for that file.
+
 Prefer `reply` after the source edit is saved. `reply --to EVENT_ID` targets an
 event other than the last received one. `poll --agent-reply` posts before it
 waits, so use it only when that ordering is intended.

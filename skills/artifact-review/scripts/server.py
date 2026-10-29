@@ -30,7 +30,9 @@ import json
 import os
 import re
 import secrets
+import shlex
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -78,6 +80,10 @@ FEEDBACK_ITEM_KINDS = (
     "text", "element", "control", "chat", "whiteboard", "text-edit")
 MAX_TEXT_EDIT_BLOCKS = 200
 MAX_TEXT_EDIT_CHARS = 100_000
+# Matches the browser: a status older than this means no agent is running.
+AGENT_LIVE_SECONDS = 125
+# A resumed agent needs time to start and poll, so one click opens one window.
+RESUME_COOLDOWN_SECONDS = 60
 
 STATE_LOCK = threading.Lock()
 EVENTS_COND = threading.Condition(STATE_LOCK)
@@ -101,6 +107,7 @@ STATE = {
     "feed": [],            # chrome-visible history: flushes + agent replies
     "events": [],          # durable events waiting for an agent poll + ack
     "agent": {"status": "offline", "last_seen": None},
+    "owner": None,         # the agent session that Resume reopens
     "warned": [],          # severe findings already attached to an event
 }
 REVISION_HISTORY = deque(maxlen=256)
@@ -110,6 +117,7 @@ SHUTDOWN_TIMER = None
 # A request thread writes it without the lock: a float assignment is atomic and
 # the reader only needs it to the nearest poll.
 LAST_PAGE_POLL = 0.0
+RESUME_LAUNCHED_AT = 0.0
 
 MIME = {".js": "application/javascript", ".mjs": "application/javascript",
         ".css": "text/css", ".html": "text/html", ".svg": "image/svg+xml",
@@ -198,7 +206,7 @@ def _persist_locked():
     STORE.sync({
         key: STATE[key]
         for key in ("ended", "ended_by", "queue", "audit", "feed",
-                    "events", "agent")
+                    "events", "agent", "owner")
     })
 
 
@@ -226,6 +234,7 @@ def _restore():
     last_seen = (previous_agent.get("last_seen")
                  if isinstance(previous_agent, dict) else None)
     STATE["agent"] = {"status": "offline", "last_seen": last_seen}
+    STATE["owner"] = saved.get("owner")
     # Every explicit server start is a reopened, live session that must audit
     # the current artifact. Persist this reset so another CLI sees it too.
     STATE["ended"] = False
@@ -241,7 +250,7 @@ def _changed_locked():
     current = _state_locked()
     changes = {}
     for key in ("version", "ended", "ended_by", "queue", "audit", "agent",
-                "activity"):
+                "resumable", "activity"):
         if current[key] != previous.get(key):
             changes[key] = copy.deepcopy(current[key])
     previous_feed = {item.get("id"): item for item in previous.get("feed", [])}
@@ -274,6 +283,7 @@ def _state_locked():
         for key in ("version", "revision", "ended", "ended_by", "queue",
                     "audit", "agent")
     }
+    public["resumable"] = STATE["owner"] is not None
     public["feed"] = activity["items"]
     public["activity"] = {
         key: activity[key]
@@ -286,6 +296,83 @@ def _reset_publication_locked():
     global PUBLISHED_STATE
     REVISION_HISTORY.clear()
     PUBLISHED_STATE = _state_locked()
+
+
+def _normalise_owner(body):
+    if body.get("agent") != "claude-code":
+        raise ValueError("unsupported agent")
+    try:
+        session_id = str(uuid.UUID(str(body.get("session_id"))))
+    except ValueError:
+        raise ValueError("session_id must be a UUID") from None
+    cwd = body.get("cwd")
+    if not isinstance(cwd, str) or not os.path.isabs(cwd) \
+            or not os.path.isdir(cwd):
+        raise ValueError("cwd must be an existing absolute directory")
+    pid = body.get("pid")
+    if pid is not None and (type(pid) is not int or pid <= 0):
+        raise ValueError("pid must be a positive integer")
+    return {"agent": "claude-code", "session_id": session_id, "cwd": cwd,
+            "pid": pid}
+
+
+def _process_running(pid):
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # The process exists but belongs to another user.
+        return True
+    return True
+
+
+def _resume_refusal_locked(owner):
+    agent = STATE["agent"]
+    if not owner:
+        return "no agent session is recorded for this review"
+    if (agent.get("status") in ("listening", "working")
+            and time.time() - (agent.get("last_seen") or 0)
+            <= AGENT_LIVE_SECONDS):
+        return "an agent is already polling this review"
+    if time.time() - RESUME_LAUNCHED_AT < RESUME_COOLDOWN_SECONDS:
+        return "the agent session is already starting"
+    if _process_running(owner.get("pid")):
+        return ("the agent session is still open in another terminal. "
+                "Switch to it and ask it to poll.")
+    return None
+
+
+def _resume_command(owner):
+    prompt = (f"Feedback is waiting on the artifact-review board for "
+              f"{ARTIFACT}. Use the artifact-review skill: open and poll that "
+              f"file, apply the feedback, reply, and keep polling.")
+    return (f"cd {shlex.quote(owner['cwd'])} && claude --resume "
+            f"{owner['session_id']} {shlex.quote(prompt)}")
+
+
+def _open_terminal(command):
+    """Run the command in a new macOS terminal window.
+
+    Return False when no window opened, so the reviewer gets the command.
+
+    Opening a .command file needs no Automation permission, unlike AppleScript,
+    and it uses the reviewer's own handler for .command files.
+    """
+    if sys.platform != "darwin":
+        return False
+    script = os.path.join(SESSION_DIR, "resume-agent.command")
+    try:
+        with open(script, "w", encoding="utf-8") as handle:
+            handle.write(f"#!/bin/sh\n{command}\n")
+        os.chmod(script, 0o700)
+        subprocess.run(["open", script], check=True, capture_output=True,
+                       timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return True
 
 
 def _cancel_shutdown_locked():
@@ -1255,6 +1342,8 @@ class Handler(BaseHTTPRequestHandler):
             "/queue": self._queue, "/unqueue": self._unqueue, "/flush": self._flush,
             "/send": self._send, "/agent-reply": self._agent_reply,
             "/agent-status": self._agent_status, "/ack": self._ack, "/end": self._end,
+            "/agent-session": self._agent_session,
+            "/resume-agent": self._resume_agent,
             "/reopen": self._reopen, "/shutdown": self._shutdown,
             "/audit": self._audit, "/audit/override": self._audit_override,
             "/whiteboard": self._whiteboard,
@@ -1433,6 +1522,32 @@ class Handler(BaseHTTPRequestHandler):
             _persist_locked()
             _changed_locked()
         self._json({"ok": True})
+
+    def _agent_session(self, body):
+        try:
+            owner = _normalise_owner(body)
+        except ValueError as error:
+            self._json({"error": str(error)}, 400)
+            return
+        with EVENTS_COND:
+            STATE["owner"] = owner
+            _persist_locked()
+            _changed_locked()
+        self._json({"ok": True})
+
+    def _resume_agent(self, body):
+        global RESUME_LAUNCHED_AT
+        with EVENTS_COND:
+            owner = copy.deepcopy(STATE["owner"])
+            refusal = _resume_refusal_locked(owner)
+            if not refusal:
+                RESUME_LAUNCHED_AT = time.time()
+        if refusal:
+            self._json({"error": refusal}, 409)
+            return
+        command = _resume_command(owner)
+        self._json({"ok": True, "launched": _open_terminal(command),
+                    "command": command})
 
     def _ack(self, body):
         event_id = body.get("id")

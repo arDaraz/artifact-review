@@ -35,6 +35,7 @@ export class ReviewRail {
     this.loadEarlier = page.locator('#loadEarlierActivity');
     this.annotateToggle = page.locator('#annBtn');
     this.editToggle = page.locator('#editBtn');
+    this.resume = page.locator('#resumeBtn');
     this.actionLabel = page.locator('#chatActionLabel');
     this.artifact = page.frameLocator('#art');
     this.root = page.locator('#reviewRail');

@@ -57,6 +57,11 @@ port and obtain that URL may access the session. Do not paste the URL into
 public logs, issues, screenshots, or chat rooms. Revoke access by stopping the
 session.
 
+A token holder can also select **Resume**. On macOS, that starts the recorded
+agent session in a new terminal window on the review host. The server builds
+that command itself from a validated session ID and directory. The browser
+cannot supply command text.
+
 ### Local state
 
 The default state directory is `~/.artifact-review`; set

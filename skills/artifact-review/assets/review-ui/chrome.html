@@ -613,6 +613,11 @@
       <span class="agent-dot" aria-hidden="true"></span>
       <span id="agentLabel">Agent offline</span>
     </span>
+    <button class="button" id="resumeBtn" type="button" disabled
+            aria-label="Resume the agent session">
+      <span aria-hidden="true">↻</span>
+      <span class="button-label">Resume</span>
+    </button>
     <button class="button" id="annBtn" type="button" aria-pressed="false"
             aria-label="Toggle annotation mode">
       <span aria-hidden="true">⌖</span>
@@ -915,6 +920,7 @@ let pendingArtifactReload = null;
 let artifactReloadDrain = null;
 let paintedQueue = "";
 let paintedFeed = "";
+let resumeStartedAt = 0;
 
 async function api(method, path, body) {
   let response;
@@ -1769,6 +1775,9 @@ $("chat").addEventListener("keydown", event => {
 $("chat").addEventListener("input", () =>
   clearState("composerState", "Failed", "Nothing to send", "Nothing to add"));
 
+/* Matches RESUME_COOLDOWN_SECONDS on the server. */
+const RESUME_COOLDOWN_MS = 60000;
+
 function renderAgent(agent) {
   const chip = $("agentChip");
   const age = agent?.last_seen ? Date.now() / 1000 - agent.last_seen : Infinity;
@@ -1785,7 +1794,56 @@ function renderAgent(agent) {
   chip.title = status === "offline"
     ? "No live agent poll is active. Feedback remains durable until an agent polls."
     : labels[status];
+  renderResume(status === "listening" || status === "working");
 }
+
+function renderResume(agentLive) {
+  const button = $("resumeBtn");
+  const starting = Date.now() - resumeStartedAt < RESUME_COOLDOWN_MS;
+  button.disabled = agentLive || starting || sendingLocked() || !state?.resumable;
+  button.querySelector(".button-label").textContent = starting ? "Starting…" : "Resume";
+  button.title = agentLive ? "The agent is already polling this review."
+    : starting ? "The agent session is starting."
+    : !state?.resumable ? "No resumable agent session is recorded. Ask an agent to open this review."
+    : "Reopen the agent session that opened this review, in a new terminal window.";
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (error) {
+    const helper = document.createElement("textarea");
+    helper.value = text;
+    document.body.appendChild(helper);
+    helper.select();
+    document.execCommand("copy");
+    helper.remove();
+  }
+}
+
+/* A resume notice is not a lasting session condition, so it clears itself. */
+function showResumeNotice(message) {
+  showBanner(message);
+  setTimeout(() => {
+    if ($("banner").textContent === message) showBanner("");
+  }, 10000);
+}
+
+$("resumeBtn").addEventListener("click", async () => {
+  try {
+    const result = await api("POST", "/resume-agent", {});
+    resumeStartedAt = Date.now();
+    if (result.launched) {
+      announce("Opened the agent session in a new Terminal window.");
+    } else {
+      await copyText(result.command);
+      showResumeNotice("Copied the resume command. Paste it into a terminal on the review host.");
+    }
+  } catch (error) {
+    showResumeNotice(`Could not resume the agent: ${error.message}`);
+  }
+  if (state) renderAgent(state.agent);
+});
 
 function applyStateDelta(current, response) {
   if (response.mode === "reset") return response.state;
@@ -1973,18 +2031,8 @@ async function reloadArtifactOnce(version) {
 }
 
 $("copyPath").addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(B.artifact);
-    announce("Artifact path copied.");
-  } catch (error) {
-    const helper = document.createElement("textarea");
-    helper.value = B.artifact;
-    document.body.appendChild(helper);
-    helper.select();
-    document.execCommand("copy");
-    helper.remove();
-    announce("Artifact path copied.");
-  }
+  await copyText(B.artifact);
+  announce("Artifact path copied.");
 });
 
 setInterval(() => {

@@ -401,6 +401,7 @@ def cmd_open(args):
             _save_registry_unlocked(registry)
             started = True
 
+    _register_agent_session(entry)
     url = _session_url(entry)
     print(f"SESSION {url}")
     if (started and args.bind not in ("127.0.0.1", "localhost", "::1")
@@ -410,6 +411,28 @@ def cmd_open(args):
               file=sys.stderr)
     if not args.no_browser and not _open_browser(url):
         print("Browser launch was unavailable; open the SESSION URL manually.",
+              file=sys.stderr)
+
+
+def _register_agent_session(entry):
+    """Let the review's Resume button reopen the agent session that opened it.
+
+    Only Claude Code exposes its session id to child processes today. Other
+    agents leave the button disabled.
+    """
+    session_id = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if not session_id:
+        return
+    pid = os.environ.get("CLAUDE_PID", "")
+    try:
+        _api(entry, "POST", "/agent-session", {
+            "agent": "claude-code",
+            "session_id": session_id,
+            "cwd": os.getcwd(),
+            "pid": int(pid) if pid.isdigit() else None,
+        })
+    except (OSError, ValueError, KeyError) as error:
+        print(f"Resume is unavailable for this review: {error}",
               file=sys.stderr)
 
 
